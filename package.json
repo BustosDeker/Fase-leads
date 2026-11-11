@@ -1,0 +1,30 @@
+{
+  "name": "inbestiga-leads",
+  "version": "0.1.0",
+  "private": true,
+  "description": "INBESTIGA · Fase 2 LEADS (metodología IMPULSE): Agente Negociador IA, OLTP + data mart en SQL Server, ETL y tablero BI.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "start": "node scripts/start.js",
+    "server": "tsx src/server/index.ts",
+    "db:init": "node scripts/db-init.js",
+    "db:reset": "node scripts/db-init.js --reset",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "16.4.7",
+    "fastify": "5.2.0",
+    "mssql": "11.0.1",
+    "tsx": "4.19.2",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "@types/mssql": "9.1.5",
+    "@types/node": "22.10.2",
+    "typescript": "5.7.2"
+  }
+}

@@ -1,0 +1,23 @@
+# Secretos y configuración local
+.env
+.env.*
+!.env.example
+
+# Dependencias y builds
+node_modules/
+dist/
+*.tsbuildinfo
+
+# OpenWA se clona en `npm run setup` (no se versiona aquí)
+vendor/
+
+# Evidencias generadas y logs
+evidencias/
+*.log
+logs/
+
+# SO / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
