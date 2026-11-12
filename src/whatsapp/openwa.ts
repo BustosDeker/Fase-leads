@@ -186,7 +186,7 @@ export async function manejarEvento(evento: { event: string; data: any }): Promi
   if (!existente.recordset[0] && !leadConocido && !frasesCoinciden(texto, c.frase))
     return { procesado: false, motivo: 'primer mensaje sin la frase de activación' };
 
-  const conv = existente.recordset[0]?.conversacion_id ?? await asegurarConversacionWhatsApp(chatId, m.contact?.pushName || m.contact?.name || null);
+  const conv = existente.recordset[0]?.conversacion_id ?? await asegurarConversacionWhatsApp(chatId, m.contact?.pushName || m.contact?.name || null, numero);
   const idExterno = typeof m.id === 'string' ? m.id : m.id?._serialized ?? null;
   const r = await procesarMensajeEntrante(conv, texto, idExterno);
   if (!r.respondio || !r.respuesta) return { procesado: true, motivo: r.motivo };
@@ -208,4 +208,61 @@ export function iniciarWhatsApp() {
   if (!cfg().habilitado) { fijarEstado({ estado: 'NO_CONFIGURADO', detalle: 'OPENWA_ENABLED=false' }); return; }
   void sincronizar();
   setInterval(() => { if (estado.estado !== 'CONECTADO' || !estado.webhookListo) void sincronizar(); }, 20_000).unref();
+}
+
+// ------------------------------------------------------------------ primer contacto saliente
+const PLANTILLA_PRIMER_CONTACTO = 'Primer contacto LEADS';
+const TEXTO_PRIMER_CONTACTO = 'Hola {nombre}, te escribe el asistente virtual de INBESTIGA. Recibimos tu interés en la asesoría de tesis y estoy aquí para orientarte. '
+  + '¿Te parece si conversamos sobre tu tesis? Puedes responder a este mensaje cuando gustes. Si prefieres que no te escribamos, responde «no me escriban».';
+
+/**
+ * El agente escribe PRIMERO a un lead existente (lo pide un asesor desde Conversaciones).
+ * Solo con consentimiento vigente (Ley 29733), sin «no contactar», con número en WHATSAPP_ALLOWLIST y WhatsApp conectado.
+ * Se envía la plantilla de primer contacto (fuera de la ventana de 24 h solo se permiten plantillas).
+ */
+export async function iniciarConversacionConLead(leadId: number, asesor: string | null) {
+  const pool = await oltp();
+  const r = await pool.request().input('l', sql.Int, leadId).query(`
+    SELECT TOP 1 c.contacto_id, c.nombres, c.whatsapp, c.consentimiento_contacto, c.no_contactar, o.oportunidad_id, o.estado
+    FROM dbo.LEAD l JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id JOIN dbo.CONTACTO c ON c.contacto_id = b.contacto_id
+    LEFT JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.lead_id = l.lead_id
+    WHERE l.lead_id = @l ORDER BY CASE WHEN o.estado IN ('DESCARTADA','PAYER_CONFIRMADO') THEN 1 ELSE 0 END, o.fecha_inicio DESC`);
+  const x = r.recordset[0];
+  const { ErrorNegocio } = await import('../negocio/oportunidad.js');
+  if (!x) throw new ErrorNegocio('Ese lead no existe.', 404);
+  const numero = String(x.whatsapp ?? '').replace(/\D/g, '');
+  if (!numero) throw new ErrorNegocio('El lead no tiene número de WhatsApp registrado. Regístralo desde la pantalla BUYERS con su número.');
+  if (x.no_contactar) throw new ErrorNegocio('El estudiante pidió no ser contactado (revocó su consentimiento).', 409);
+  if (!x.consentimiento_contacto) throw new ErrorNegocio('El lead no tiene consentimiento de contacto: el agente no puede escribirle primero (Ley 29733).', 409);
+  if (!cfg().allowlist.includes(numero)) throw new ErrorNegocio(`El número …${numero.slice(-4)} no está en WHATSAPP_ALLOWLIST del .env. Agrégalo y reinicia la app.`, 409);
+  if (!x.oportunidad_id) throw new ErrorNegocio('El lead no tiene una oportunidad comercial.');
+  if (['DESCARTADA', 'PAYER_CONFIRMADO'].includes(x.estado)) throw new ErrorNegocio('La oportunidad de ese lead ya está cerrada.', 409);
+
+  // Plantilla registrada (se crea la primera vez).
+  const p = await pool.request().input('n', sql.VarChar, PLANTILLA_PRIMER_CONTACTO).input('t', sql.VarChar, TEXTO_PRIMER_CONTACTO).query(`
+    IF NOT EXISTS (SELECT 1 FROM dbo.PLANTILLA_MENSAJE WHERE nombre = @n)
+      INSERT dbo.PLANTILLA_MENSAJE (nombre, categoria, texto, aprobada_meta, activa) VALUES (@n, 'SEGUIMIENTO_BUYER', @t, 0, 1);
+    SELECT TOP 1 plantilla_msg_id, texto FROM dbo.PLANTILLA_MENSAJE WHERE nombre = @n`);
+  const plantilla = p.recordset[0];
+  const texto = String(plantilla.texto).replace('{nombre}', String(x.nombres).split(' ')[0]);
+  const chatId = `${numero}@c.us`;
+
+  await enviarTexto(chatId, texto);   // primero se envía: si falla, no queda nada registrado como enviado
+
+  const c = await pool.request().input('c', sql.Int, x.contacto_id).input('o', sql.Int, x.oportunidad_id).input('chat', sql.VarChar, chatId)
+    .input('pl', sql.Int, plantilla.plantilla_msg_id).input('t', sql.NVarChar, texto)
+    .input('d', sql.NVarChar, `Primer mensaje enviado por el agente${asesor ? ` a pedido de ${asesor}` : ''}`).query(`
+      DECLARE @cv INT = (SELECT TOP 1 conversacion_id FROM dbo.CONVERSACION WHERE contacto_id = @c AND canal_mensajeria = 'WHATSAPP' AND estado <> 'CERRADA' ORDER BY conversacion_id DESC);
+      IF @cv IS NULL BEGIN
+        INSERT dbo.CONVERSACION (contacto_id, tipo_ventana, estado, canal_mensajeria, chat_id, oportunidad_id)
+        VALUES (@c, 'SERVICIO_24H', 'ABIERTA', 'WHATSAPP', @chat, @o);
+        SET @cv = SCOPE_IDENTITY();
+      END
+      INSERT dbo.MENSAJE (conversacion_id, emisor, tipo, plantilla_msg_id, contenido, dentro_ventana) VALUES (@cv, 'BOT', 'PLANTILLA', @pl, @t, 0);
+      INSERT dbo.OPORTUNIDAD_EVENTO (oportunidad_id, evento, origen, detalle) VALUES (@o, 'PRIMER_CONTACTO_WHATSAPP', 'AGENTE', @d);
+      SELECT @cv AS conversacion_id;`);
+  const conversacionId = c.recordset[0].conversacion_id as number;
+  publicar('conversacion', { conversacionId, nueva: true });
+  publicar('oltp', { tipo: 'whatsapp', oportunidadId: x.oportunidad_id, leadId });
+  return { conversacionId, enviadoA: `…${numero.slice(-4)}` };
 }

@@ -1,6 +1,7 @@
 // Rutas de WhatsApp (OpenWA): estado, conectar con QR, desconectar y webhook firmado.
 import type { FastifyInstance } from 'fastify';
-import { conectar, desconectar, enviarAConversacion, firmaValida, iniciarWhatsApp, manejarEvento, qr, resumenEstado, sincronizar } from '../whatsapp/openwa.js';
+import { z } from 'zod';
+import { conectar, desconectar, enviarAConversacion, iniciarConversacionConLead, firmaValida, iniciarWhatsApp, manejarEvento, qr, resumenEstado, sincronizar } from '../whatsapp/openwa.js';
 import { registrarEnvioCanal } from './rutas-agente.js';
 
 export function rutasWhatsApp(app: FastifyInstance) {
@@ -10,6 +11,11 @@ export function rutasWhatsApp(app: FastifyInstance) {
   app.get('/api/whatsapp/estado', async () => { await sincronizar(); return resumenEstado(); });
   app.get('/api/whatsapp/qr', async () => ({ qr: await qr(), ...resumenEstado() }));
   app.post('/api/whatsapp/conectar', async () => conectar());
+  // El agente escribe primero a un lead con consentimiento (lo pide un asesor).
+  app.post('/api/whatsapp/iniciar', async (req) => {
+    const { leadId } = z.object({ leadId: z.number().int().positive() }).parse(req.body);
+    return iniciarConversacionConLead(leadId, (req as any).sesion?.usuario ?? null);
+  });
   app.post('/api/whatsapp/desconectar', async () => { await desconectar(); return resumenEstado(); });
 
   // Webhook: necesita el cuerpo crudo para verificar la firma HMAC, por eso va en un contexto propio.

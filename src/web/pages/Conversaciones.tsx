@@ -40,6 +40,11 @@ export function Conversaciones() {
   });
   const [nombres, setNombres] = useState('');
   const [apellidos, setApellidos] = useState('');
+  // El agente escribe primero por WhatsApp a un lead que ya dio su consentimiento.
+  const iniciar = useMutation({
+    mutationFn: (leadId: number) => api.post<F>('/api/whatsapp/iniciar', { leadId }),
+    onSuccess: (r) => { setParams({ c: String(r.conversacionId) }); cliente.invalidateQueries({ queryKey: ['conversaciones'] }); },
+  });
 
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-5">
@@ -63,6 +68,17 @@ export function Conversaciones() {
               <p className="nota">Se registra como dato de prueba. O continúa con un lead existente:</p>
               <BuscadorLead alElegir={(r) => nueva.mutate({ leadId: r.lead_id })} placeholder="Buscar lead existente…" />
             </form>
+          </Bloque>
+
+          <Bloque titulo="Escribir primero por WhatsApp" origen="El agente envía el primer mensaje a un lead desde el número vinculado y luego continúa la conversación">
+            <BuscadorLead placeholder="Buscar lead con WhatsApp…" alElegir={(r) => {
+              if (!r.whatsapp) { window.alert('Ese lead no tiene número de WhatsApp. Regístralo desde la pantalla BUYERS con su número.'); return; }
+              if (window.confirm(`¿Enviar el primer mensaje del agente a ${r.nombres} ${r.apellidos} (…${r.whatsapp.slice(-4)}) por WhatsApp?`)) iniciar.mutate(r.lead_id);
+            }} />
+            <p className="nota mt-2">Requisitos: WhatsApp conectado, consentimiento vigente del lead y su número en WHATSAPP_ALLOWLIST (.env).</p>
+            {iniciar.isPending && <p className="nota mt-2">Enviando…</p>}
+            {iniciar.isError && <div className="mt-2"><Aviso>{(iniciar.error as Error).message}</Aviso></div>}
+            {iniciar.data && <div className="mt-2"><Aviso tipo="ok">Mensaje enviado a {iniciar.data.enviadoA}. Cuando responda, el agente continúa.</Aviso></div>}
           </Bloque>
 
           <Bloque titulo="Conversaciones" accion={

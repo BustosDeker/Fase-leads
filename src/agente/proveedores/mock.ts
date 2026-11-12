@@ -62,6 +62,8 @@ async function responder(p: PeticionAgente): Promise<string> {
       }
       if (r.ok) return `Perfecto: ${r.carrera} en la ${r.universidad}. Ahora cuéntame de tu tesis: ¿cuál es el tema, cuánto avance tienes (en %) y si cuentas con una empresa o institución donde aplicarla?`;
     }
+    if (!u && !c && !e && usuario.length <= 1)   // primer mensaje (p. ej. respuesta al saludo del agente)
+      return `¡Hola, ${cx.nombres}! Para orientarte, cuéntame: ¿en qué universidad y carrera estudias, y en qué etapa estás (IX ciclo, X ciclo, egresado o bachiller)?`;
     const falta = [!u && 'tu universidad', !c && 'tu carrera', !e && 'tu etapa (IX ciclo, X ciclo, egresado o bachiller)'].filter(Boolean);
     return `Gracias. Me falta saber ${falta.join(', ').replace(/, ([^,]*)$/, ' y $1')}.`;
   }

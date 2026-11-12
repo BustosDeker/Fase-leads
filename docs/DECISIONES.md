@@ -175,3 +175,10 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - **La autorización vive en un solo lugar** (`autorizar()` en `src/server/auth.ts`, con pruebas): sin sesión → 401; `viewer` solo consulta; el ETL y la vinculación de WhatsApp son solo de `admin`.
 - **Las evidencias se calculan, no se escriben.** `/evidencias` consulta los permisos reales del usuario SQL (`IS_SRVROLEMEMBER`, `IS_MEMBER`, `HAS_PERMS_BY_NAME`), recalcula las 10 medidas desde el OLTP y las compara con el data mart, y ejecuta `npm test` en el servidor.
 - **Sin códigos internos en la UI**, también en Evidencias: las medidas y reglas se muestran con el nombre de negocio de `shared/indicadores.ts`.
+
+## 18. El agente puede escribir primero a un lead (a pedido de un asesor)
+
+- El prompt original decía que el agente nunca escribe primero. Para la demo con WhatsApp real se agregó el **primer contacto saliente**, solo para leads que **ya dieron su consentimiento** (por ejemplo, desde BUYERS), y siempre a pedido de un asesor. El agente nunca inicia contacto por su cuenta.
+- Se envía una **plantilla** registrada en `PLANTILLA_MENSAJE` («Primer contacto LEADS»), guardada como `MENSAJE.tipo = 'PLANTILLA'` fuera de la ventana de 24 h, que es lo que exige `CK_MENSAJE_VENTANA`. El mensaje incluye cómo pedir que no le escriban más.
+- **Se envía antes de registrar:** si WhatsApp falla, no queda en la base un mensaje que nunca salió.
+- Cuando el estudiante responde, WhatsApp puede identificar el chat con un id de privacidad (`@lid`). La app une la respuesta a la conversación ya abierta usando el número real (`RESOLVE_LID_TO_PHONE`).

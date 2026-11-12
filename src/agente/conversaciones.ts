@@ -51,12 +51,19 @@ export async function crearConversacionSimulada(d: { nombres?: string; apellidos
 }
 
 /** Conversación activa de un número de WhatsApp; si es la primera vez, crea al estudiante (lo usa el webhook de OpenWA). */
-export async function asegurarConversacionWhatsApp(chatId: string, nombreVisible: string | null) {
+export async function asegurarConversacionWhatsApp(chatId: string, nombreVisible: string | null, numeroTelefono?: string) {
   const pool = await oltp();
   const ex = await pool.request().input('chat', sql.VarChar, chatId).query(`
     SELECT TOP 1 conversacion_id FROM dbo.CONVERSACION WHERE chat_id = @chat AND canal_mensajeria = 'WHATSAPP' ORDER BY conversacion_id DESC`);
   if (ex.recordset[0]) return ex.recordset[0].conversacion_id as number;
-  const numero = chatId.replace(/@.*/, '');
+  // WhatsApp puede identificar al mismo chat como «51…@c.us» o con un id de privacidad «…@lid»: se usa el número real.
+  const numero = (numeroTelefono || chatId.replace(/@.*/, '')).replace(/\D/g, '');
+  // ¿El agente ya le escribió primero a este número? Se continúa esa conversación (y se guarda el id de chat con el que respondió).
+  const previa = await pool.request().input('w', sql.VarChar, numero.slice(0, 20)).input('chat', sql.VarChar, chatId).query(`
+    UPDATE TOP (1) cv SET chat_id = @chat OUTPUT INSERTED.conversacion_id
+    FROM dbo.CONVERSACION cv JOIN dbo.CONTACTO c ON c.contacto_id = cv.contacto_id
+    WHERE c.whatsapp = @w AND cv.canal_mensajeria = 'WHATSAPP' AND cv.estado <> 'CERRADA'`);
+  if (previa.recordset[0]) return previa.recordset[0].conversacion_id as number;
   // ¿Ya es un lead (p. ej. llegó desde BUYERS con su consentimiento)? Se abre la conversación sobre su oportunidad vigente.
   const conocido = await pool.request().input('w', sql.VarChar, numero.slice(0, 20)).query(`
     SELECT TOP 1 c.contacto_id, o.oportunidad_id FROM dbo.CONTACTO c JOIN dbo.BUYER b ON b.contacto_id = c.contacto_id JOIN dbo.LEAD l ON l.buyer_id = b.buyer_id
