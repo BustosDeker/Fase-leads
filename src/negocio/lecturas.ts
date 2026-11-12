@@ -3,6 +3,11 @@ import { oltp, sql } from '../db.js';
 
 const rs = (r: sql.IResult<any>) => r.recordsets as sql.IRecordSet<any>[];
 
+async function expresionEnlaceCita() {
+  const r = await (await oltp()).request().query("SELECT CASE WHEN COL_LENGTH('dbo.CITA_VIRTUAL', 'enlace') IS NULL THEN 0 ELSE 1 END AS existe");
+  return r.recordset[0]?.existe ? 'c.enlace' : 'CAST(NULL AS NVARCHAR(300))';
+}
+
 /** Autocompletado: por nombre, apellido, WhatsApp, o identificador (lead, buyer, contacto, oportunidad). */
 export async function buscarLeads(texto: string) {
   const t = texto.trim();
@@ -22,6 +27,7 @@ export async function buscarLeads(texto: string) {
 
 /** Ficha nominal completa (bloques de la tabla 5 del informe). */
 export async function fichaNominal(leadId: number) {
+  const enlaceCita = await expresionEnlaceCita();
   const r = await (await oltp()).request().input('l', sql.Int, leadId).query(`
     -- 0 identidad + lead + perfil académico + canal de origen (BUYERS: solo lectura)
     SELECT l.lead_id, l.buyer_id, l.fecha_lead, l.prioridad, l.estado AS estado_lead,
@@ -67,7 +73,7 @@ export async function fichaNominal(leadId: number) {
     SELECT e.escalamiento_id, e.oportunidad_id, e.fecha, e.motivo, e.destino_rol, e.estado, e.fecha_atencion, e.resumen, a.nombre AS asesor
     FROM dbo.ESCALAMIENTO e LEFT JOIN dbo.ASESOR a ON a.asesor_id = e.asesor_id WHERE e.lead_id = @l ORDER BY e.fecha DESC;
     -- 9 citas
-    SELECT c.cita_id, c.oportunidad_id, c.inicio, c.fin, c.medio, c.estado, a.nombre AS asesor
+    SELECT c.cita_id, c.oportunidad_id, c.inicio, c.fin, c.medio, c.estado, ${enlaceCita} AS enlace, a.nombre AS asesor
     FROM dbo.CITA_VIRTUAL c JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.oportunidad_id = c.oportunidad_id LEFT JOIN dbo.ASESOR a ON a.asesor_id = c.asesor_id
     WHERE o.lead_id = @l ORDER BY c.inicio DESC;
     -- 10 seguimientos
@@ -157,8 +163,9 @@ export async function consentimientos() {
 }
 
 export async function agenda(desde: Date, hasta: Date) {
+  const enlaceCita = await expresionEnlaceCita();
   const r = await (await oltp()).request().input('d', sql.DateTime2, desde).input('h', sql.DateTime2, hasta).query(`
-    SELECT c.cita_id, c.oportunidad_id, o.lead_id, c.asesor_id, a.nombre AS asesor, c.inicio, c.fin, c.medio, c.estado,
+    SELECT c.cita_id, c.oportunidad_id, o.lead_id, c.asesor_id, a.nombre AS asesor, c.inicio, c.fin, c.medio, c.estado, ${enlaceCita} AS enlace,
            co.nombres + ' ' + co.apellidos AS estudiante,
            CASE WHEN c.estado <> 'CANCELADA' AND EXISTS (SELECT 1 FROM dbo.CITA_VIRTUAL x WHERE x.asesor_id = c.asesor_id
                 AND x.cita_id <> c.cita_id AND x.estado <> 'CANCELADA' AND x.inicio < c.fin AND c.inicio < x.fin) THEN 1 ELSE 0 END AS solapada

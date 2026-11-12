@@ -1,6 +1,7 @@
 // Proveedor Google Gemini (generateContent con function calling) vía HTTP.
 // No verificado con una clave real en este entorno (ver README «Pendiente/Limitaciones»).
-import { MAX_RONDAS_HERRAMIENTAS, type PeticionAgente, type ProveedorLLM } from '../tipos.js';
+import { MAX_RONDAS_HERRAMIENTAS, type PeticionAgente, type ProveedorLLM, type UsoTokens } from '../tipos.js';
+import { errorHttp, fetchConReintentos, sumarUso } from './comun.js';
 
 /** Gemini acepta un subconjunto de JSON Schema: se quita additionalProperties. */
 function esquemaGemini(e: any): any {
@@ -11,29 +12,34 @@ function esquemaGemini(e: any): any {
 }
 
 export function proveedorGemini(apiKey: string, modelo: string): ProveedorLLM {
+  let uso: UsoTokens | undefined;
   return {
     nombre: 'gemini',
     modelo,
+    get uso() { return uso; },
     async responder(p: PeticionAgente) {
+      uso = { entrada: 0, salida: 0, total: 0 };
       const declaraciones = p.herramientas.map((h) => {
         const params = esquemaGemini(h.esquema);
         return { name: h.nombre, description: h.descripcion, ...(Object.keys(params.properties ?? {}).length ? { parameters: params } : {}) };
       });
       const contenidos: any[] = p.historial.map((m) => ({ role: m.rol === 'assistant' ? 'model' : 'user', parts: [{ text: m.texto }] }));
       for (let ronda = 0; ronda <= MAX_RONDAS_HERRAMIENTAS; ronda++) {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
+        const res = await fetchConReintentos(() => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
           method: 'POST',
           headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: p.sistema + '\n\nSituación actual:\n' + p.contexto }] },
             contents: contenidos,
-            tools: [{ functionDeclarations: declaraciones }],
-            toolConfig: { functionCallingConfig: { mode: ronda < MAX_RONDAS_HERRAMIENTAS ? 'AUTO' : 'NONE' } },
+            ...(declaraciones.length ? { tools: [{ functionDeclarations: declaraciones }],
+              toolConfig: { functionCallingConfig: { mode: ronda < MAX_RONDAS_HERRAMIENTAS ? 'AUTO' : 'NONE' } } } : {}),
           }),
           signal: AbortSignal.timeout(90_000),
-        });
-        if (!res.ok) throw new Error(`Gemini respondió ${res.status}: ${(await res.text()).slice(0, 300)}`);
-        const contenido = (await res.json()).candidates?.[0]?.content;
+        }));
+        if (!res.ok) throw errorHttp('Gemini', res.status);
+        const json: any = await res.json();
+        uso = sumarUso(uso, json.usageMetadata?.promptTokenCount, json.usageMetadata?.candidatesTokenCount);
+        const contenido = json.candidates?.[0]?.content;
         const partes: any[] = contenido?.parts ?? [];
         const llamadas = partes.filter((x) => x.functionCall);
         if (!llamadas.length) return partes.map((x) => x.text ?? '').join('').trim();

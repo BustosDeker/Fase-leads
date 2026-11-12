@@ -53,7 +53,8 @@ function cookieDe(req: FastifyRequest): string | undefined {
 }
 
 // Rutas que no usan la sesión: tienen su propia autenticación (token Bearer o firma HMAC) o son el login.
-const PUBLICAS = new Set(['/api/auth/login', '/api/auth/yo', '/api/buyers', '/api/payers/confirmacion', '/api/whatsapp/webhook']);
+const PUBLICAS = new Set(['/api/auth/login', '/api/auth/yo', '/api/buyers', '/api/payers/confirmacion', '/api/whatsapp/webhook',
+  '/api/agente/seguimiento/candidatos', '/api/agente/seguimiento/ejecutar', '/api/agente/derivaciones/pendientes']);
 // Acciones de administración.
 const SOLO_ADMIN = [/^\/api\/etl\/ejecutar$/, /^\/api\/whatsapp\/(conectar|desconectar)$/];
 // Lo único que un viewer puede hacer además de consultar.

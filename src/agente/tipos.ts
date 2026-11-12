@@ -18,9 +18,16 @@ export interface PeticionAgente {
   sospechaInyeccion: boolean;
 }
 
+export interface UsoTokens {
+  entrada: number;
+  salida: number;
+  total: number;
+}
+
 export interface ProveedorLLM {
-  nombre: 'anthropic' | 'openai' | 'gemini' | 'mock';
+  nombre: 'anthropic' | 'openai' | 'gemini' | 'groq' | 'mock';
   modelo: string;
+  uso?: UsoTokens;
   responder(p: PeticionAgente): Promise<string>;
 }
 

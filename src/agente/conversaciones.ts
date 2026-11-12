@@ -121,17 +121,17 @@ export async function detalleConversacion(conversacionId: number) {
 
 /** Un asesor toma el control: el agente deja de responder en esta conversación. */
 export async function tomarControl(conversacionId: number, asesorId: number | null) {
-  await (await oltp()).request().input('c', sql.Int, conversacionId).input('a', sql.Int, asesorId)
+  await enTransaccion(await oltp(), (tx) => new sql.Request(tx).input('c', sql.Int, conversacionId).input('a', sql.Int, asesorId)
     .query(`UPDATE dbo.CONVERSACION SET control_humano = 1, asesor_control_id = @a, estado = 'DERIVADA', resuelta_sin_humano = 0 WHERE conversacion_id = @c;
             UPDATE dbo.ESCALAMIENTO SET estado = 'ATENDIDO', fecha_atencion = SYSDATETIME(), asesor_id = ISNULL(asesor_id, @a)
-            WHERE conversacion_id = @c AND estado = 'PENDIENTE';`);
+            WHERE conversacion_id = @c AND estado = 'PENDIENTE';`));
   publicar('conversacion', { conversacionId, control: 'humano' });
 }
 
 /** Devuelve la conversación al agente (cierra los escalamientos atendidos). */
 export async function devolverControl(conversacionId: number) {
-  await (await oltp()).request().input('c', sql.Int, conversacionId)
+  await enTransaccion(await oltp(), (tx) => new sql.Request(tx).input('c', sql.Int, conversacionId)
     .query(`UPDATE dbo.CONVERSACION SET control_humano = 0, asesor_control_id = NULL, estado = 'ABIERTA' WHERE conversacion_id = @c;
-            UPDATE dbo.ESCALAMIENTO SET estado = 'CERRADO' WHERE conversacion_id = @c AND estado IN ('PENDIENTE','ATENDIDO');`);
+            UPDATE dbo.ESCALAMIENTO SET estado = 'CERRADO' WHERE conversacion_id = @c AND estado IN ('PENDIENTE','ATENDIDO');`));
   publicar('conversacion', { conversacionId, control: 'agente' });
 }

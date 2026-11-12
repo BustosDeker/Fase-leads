@@ -7,7 +7,7 @@ import { oltp, sql } from '../db.js';
 import { agendarCita, cambiarEstadoCita, esquemaCita, reprogramarCita, ESTADOS_CITA } from '../negocio/agenda.js';
 import { calificarAptitud, entregarDiagnostico, esquemaSolicitudDiagnostico, solicitarDiagnostico } from '../negocio/diagnostico.js';
 import * as L from '../negocio/lecturas.js';
-import { enTransaccion, ErrorNegocio, transicionar } from '../negocio/oportunidad.js';
+import { enTransaccion, ErrorNegocio, registrarEvento, transicionar } from '../negocio/oportunidad.js';
 import { contextoCotizacion, esquemaSolicitudCotizacion, presentarPropuesta, simularCotizacion } from '../negocio/propuestas.js';
 import { publicar } from './eventos.js';
 
@@ -261,11 +261,16 @@ export function rutasLeads(app: FastifyInstance) {
   app.get('/api/objeciones', async () => L.objecionesYEscalamientos());
   app.post('/api/escalamientos/:id/atender', async (req) => {
     const { id: e } = z.object({ id }).parse(req.params);
-    const r = await (await oltp()).request().input('e', sql.Int, e).query(`
-      UPDATE dbo.ESCALAMIENTO SET fecha_atencion = SYSDATETIME(), estado = 'ATENDIDO'
-      OUTPUT INSERTED.oportunidad_id WHERE escalamiento_id = @e AND fecha_atencion IS NULL`);
-    await avisar(r.recordset[0]?.oportunidad_id ?? null, 'escalamiento');
-    return { ok: !!r.recordset[0] };
+    const oportunidadId = await enTransaccion(await oltp(), async (tx) => {
+      const r = await new sql.Request(tx).input('e', sql.Int, e).query(`
+        UPDATE dbo.ESCALAMIENTO SET fecha_atencion = SYSDATETIME(), estado = 'ATENDIDO'
+        OUTPUT INSERTED.oportunidad_id WHERE escalamiento_id = @e AND estado = 'PENDIENTE' AND fecha_atencion IS NULL`);
+      const o = r.recordset[0]?.oportunidad_id as number | undefined;
+      if (o) await registrarEvento(tx, o, 'ESCALAMIENTO_ATENDIDO', 'HUMANO', `Escalamiento ${e} atendido.`);
+      return o ?? null;
+    });
+    await avisar(oportunidadId, 'escalamiento');
+    return { ok: !!oportunidadId };
   });
 
   // ---------------- Consentimiento (Ley 29733)

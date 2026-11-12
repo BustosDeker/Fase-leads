@@ -47,7 +47,8 @@ async function sumasHechos() {
   return r.recordset[0];
 }
 
-test('ETL + verificación: el data mart coincide con el OLTP', opciones(), async () => {
+test('ETL + verificación: el data mart coincide con el OLTP', opciones(), async (t) => {
+  if (!disponible) return t.skip('SQL Server no disponible (ejecuta npm run db:init)');
   const r = await ejecutarEtl(CORTE, { origen: 'TEST' });
   assert.ok(r.ok, r.error);
   const v = await verificarOltpMart(CORTE);
@@ -55,14 +56,16 @@ test('ETL + verificación: el data mart coincide con el OLTP', opciones(), async
   for (const c of v.coherencia) assert.equal(c.cumple, 'SI', `${c.regla}: ${c.num} > ${c.den}`);
 });
 
-test('ETL idempotente: repetir con el mismo @Corte no cambia filas ni sumas', opciones(), async () => {
+test('ETL idempotente: repetir con el mismo @Corte no cambia filas ni sumas', opciones(), async (t) => {
+  if (!disponible) return t.skip('SQL Server no disponible (ejecuta npm run db:init)');
   await ejecutarEtl(CORTE, { origen: 'TEST' });
   const a = await sumasHechos();
   await ejecutarEtl(CORTE, { origen: 'TEST' });
   assert.deepEqual(await sumasHechos(), a);
 });
 
-test('la BD rechaza transiciones de estado no permitidas', opciones(), async () => {
+test('la BD rechaza transiciones de estado no permitidas', opciones(), async (t) => {
+  if (!disponible) return t.skip('SQL Server no disponible (ejecuta npm run db:init)');
   await enTransaccionRevertida(async (req) => {
     const r = await req().query(`
       INSERT dbo.CONTACTO (nombres, apellidos, es_demo) VALUES (N'Prueba', N'Automática', 1);
@@ -77,7 +80,8 @@ test('la BD rechaza transiciones de estado no permitidas', opciones(), async () 
   });
 });
 
-test('la BD rechaza descuentos sobre el tope y precios bajo el mínimo', opciones(), async () => {
+test('la BD rechaza descuentos sobre el tope y precios bajo el mínimo', opciones(), async (t) => {
+  if (!disponible) return t.skip('SQL Server no disponible (ejecuta npm run db:init)');
   await enTransaccionRevertida(async (req) => {
     const base = await req().query(`SELECT TOP 1 l.lead_id, t.servicio_id FROM dbo.LEAD l CROSS JOIN dbo.TARIFA t`);
     if (!base.recordset.length) return; // sin leads aún
@@ -91,7 +95,8 @@ test('la BD rechaza descuentos sobre el tope y precios bajo el mínimo', opcione
   });
 });
 
-test('la transferencia a PAYERS se emite una sola vez (idempotency_key única)', opciones(), async () => {
+test('la transferencia a PAYERS se emite una sola vez (idempotency_key única)', opciones(), async (t) => {
+  if (!disponible) return t.skip('SQL Server no disponible (ejecuta npm run db:init)');
   await enTransaccionRevertida(async (req) => {
     const p = await req().query(`SELECT TOP 1 propuesta_id, oportunidad_id FROM dbo.PROPUESTA WHERE oportunidad_id IS NOT NULL`);
     if (!p.recordset.length) return;

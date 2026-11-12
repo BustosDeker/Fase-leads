@@ -1,0 +1,80 @@
+{
+  "name": "INBESTIGA - Seguimiento por inactividad",
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] } },
+      "id": "seguimiento-schedule",
+      "name": "Cada 15 minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [80, 300]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": { "assignments": [{ "id": "app-url", "name": "appUrl", "value": "http://127.0.0.1:3100", "type": "string" }] },
+        "options": {}
+      },
+      "id": "seguimiento-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [280, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$node[\"Config\"].json.appUrl + '/api/agente/seguimiento/ejecutar'}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "seguimiento-http",
+      "name": "Ejecutar seguimiento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "credentials": { "httpHeaderAuth": { "name": "INBESTIGA agente" } },
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "combinator": "or",
+          "conditions": [
+            { "id": "escalados", "leftValue": "={{$json.escalados || 0}}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } },
+            { "id": "enviados", "leftValue": "={{$json.enviados || 0}}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } }
+          ]
+        }
+      },
+      "id": "seguimiento-if",
+      "name": "¿Hay envíos o derivaciones?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [780, 300]
+    },
+    {
+      "parameters": { "fromEmail": "", "toEmail": "", "subject": "INBESTIGA: seguimiento requiere revisión", "emailType": "text", "message": "={{'Resultado de seguimiento: ' + JSON.stringify($json)}}" },
+      "id": "seguimiento-aviso",
+      "name": "Aviso (DESACTIVADO)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "disabled": true,
+      "position": [1040, 220]
+    }
+  ],
+  "connections": {
+    "Cada 15 minutos": { "main": [[{ "node": "Config", "type": "main", "index": 0 }]] },
+    "Config": { "main": [[{ "node": "Ejecutar seguimiento", "type": "main", "index": 0 }]] },
+    "Ejecutar seguimiento": { "main": [[{ "node": "¿Hay envíos o derivaciones?", "type": "main", "index": 0 }]] },
+    "¿Hay envíos o derivaciones?": { "main": [[{ "node": "Aviso (DESACTIVADO)", "type": "main", "index": 0 }], []] }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "inbestiga-seguimiento-v2",
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": []
+}

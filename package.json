@@ -19,6 +19,9 @@
     "seed": "tsx src/seed/cli.ts",
     "seed:reset": "tsx src/seed/cli.ts --reset",
     "test": "node --import tsx --test \"tests/*.test.ts\"",
+    "agente:probar": "tsx scripts/agente-probar.ts",
+    "agente:evaluar": "tsx scripts/evaluar-agente.ts",
+    "n8n": "node scripts/n8n.js",
     "db:informe": "node scripts/db-init.js --informe",
     "build": "vite build",
     "dev": "node scripts/dev.js"

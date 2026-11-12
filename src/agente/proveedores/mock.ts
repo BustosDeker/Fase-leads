@@ -82,6 +82,9 @@ export function proveedorMock(): ProveedorLLM {
 }
 
 async function responder(p: PeticionAgente): Promise<string> {
+  if (p.contexto.startsWith('GENERAR_RESUMEN_MEMORIA')) {
+    return p.historial[0]?.texto.split('\n').filter((x) => x.startsWith('Estudiante:')).slice(-6).join(' | ').slice(0, 700) || 'Sin información conversacional suficiente.';
+  }
   const cx = p.datos;
   const usuario = p.historial.filter((m) => m.rol === 'user');
   const ultimo = usuario[usuario.length - 1]?.texto ?? '';

@@ -15,6 +15,7 @@
    7. OBJECION.respuesta_agente + CATALOGO_OBJECION (editable)
    8. TRANSICION_ESTADO_OPORTUNIDAD + OPORTUNIDAD_EVENTO + trigger de validacion
    9. AGENTE_TURNO (auditoria: mensaje, tools, latencia, modelo)
+  10. CITA_VIRTUAL.enlace (enlace opcional de Google Meet/Zoom exigido por Tabla 7)
 ==============================================================================*/
 USE INBESTIGA_TESIS;
 GO
@@ -272,4 +273,12 @@ FROM (VALUES
     ('TRANSFERIDA',       'DESCARTADA',        'DESCARTE')
 ) v(o, d, e)
 WHERE NOT EXISTS (SELECT 1 FROM dbo.TRANSICION_ESTADO_OPORTUNIDAD t WHERE t.estado_origen = v.o AND t.estado_destino = v.d);
+GO
+
+/*------------------------------------------------------------------ 10. Enlace opcional de la cita (B1, Tabla 7 del informe)
+ La app puede comunicar horario, medio y enlace sin inventar una URL. Se mantiene
+ NULL para no romper citas existentes ni integraciones/frontend anteriores.
+*/
+IF COL_LENGTH('dbo.CITA_VIRTUAL', 'enlace') IS NULL
+    ALTER TABLE dbo.CITA_VIRTUAL ADD enlace NVARCHAR(300) NULL;
 GO

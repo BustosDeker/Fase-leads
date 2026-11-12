@@ -3,8 +3,8 @@
 // src/negocio (máquina de estados, motor de precios, agenda). Las escrituras van en transacción.
 import { z } from 'zod';
 import { oltp, sql } from '../db.js';
-import { agendarCita } from '../negocio/agenda.js';
-import { solicitarDiagnostico } from '../negocio/diagnostico.js';
+import { agendarCita, cambiarEstadoCita, reprogramarCita } from '../negocio/agenda.js';
+import { calificarAptitud, entregarDiagnostico, faltantesDiagnostico, solicitarDiagnostico } from '../negocio/diagnostico.js';
 import { ErrorNegocio, enTransaccion, oportunidadBloqueada, registrarEvento, transicionar } from '../negocio/oportunidad.js';
 import { presentarPropuesta, simularCotizacion } from '../negocio/propuestas.js';
 import { catalogos, type ContextoAgente } from './contexto.js';
@@ -45,29 +45,96 @@ const parametrosCotizacion = {
   forma_pago: { type: 'string', enum: ['CONTADO', 'CUOTAS'], description: 'Forma de pago que prefiere el estudiante.' },
   aplicar_promocion: { type: 'boolean', description: 'true solo si el estudiante califica a una promoción vigente que el sistema reconoce.' },
   descuento_negociado_pct: { type: 'number', description: 'Descuento adicional negociado (%). 0 si no lo pidió. El sistema verifica tope y precio mínimo.' },
+  extras: { type: 'array', items: { type: 'object', properties: {
+    entregable_id: { type: 'integer', description: 'Id de un extra devuelto por detalle_servicio.' },
+    cantidad: { type: 'integer', minimum: 1, maximum: 10 },
+  }, required: ['entregable_id', 'cantidad'], additionalProperties: false }, description: 'Solo extras devueltos por detalle_servicio.' },
 };
-const entradaCotizacion = z.object({
+export const esquemaEntradaCotizacion = z.object({
   servicio_id: z.number().int().positive(),
   forma_pago: z.enum(['CONTADO', 'CUOTAS']).default('CUOTAS'),
   aplicar_promocion: z.boolean().default(false),
   descuento_negociado_pct: z.number().min(0).max(100).default(0),
+  extras: z.array(z.object({ entregable_id: z.number().int().positive(), cantidad: z.number().int().min(1).max(10) })).max(10).default([]),
 });
+const entradaCotizacion = esquemaEntradaCotizacion;
 const solicitud = (cx: ContextoAgente, e: z.infer<typeof entradaCotizacion>) => ({
   oportunidadId: exigirOportunidad(cx).oportunidadId, servicioId: e.servicio_id, formaPago: e.forma_pago,
-  aplicarPromocion: e.aplicar_promocion, descuentoNegociadoPct: e.descuento_negociado_pct, extras: [],
+  aplicarPromocion: e.aplicar_promocion, descuentoNegociadoPct: e.descuento_negociado_pct,
+  extras: e.extras.map((x) => ({ entregableId: x.entregable_id, cantidad: x.cantidad })),
 });
+
+function datosDiagnostico(cx: ContextoAgente) {
+  const d = cx.diagnostico;
+  return d ? { tema: d.tema, tipoTesis: d.tipoTesis, avance: d.avance, tieneEmpresa: d.tieneEmpresa,
+    limitaciones: d.limitaciones, fechaLimite: cx.preferencias?.fechaLimite ?? null } : null;
+}
+
+function resumenDiagnostico(cx: ContextoAgente) {
+  const d = cx.diagnostico!;
+  const empresa = d.tieneEmpresa ? 'sí' : 'no';
+  return `Tema: ${d.tema}; tipo: ${d.tipoTesis}; avance declarado: ${d.avance}%; empresa o institución: ${empresa}; ` +
+    `limitaciones: ${d.limitaciones}; fecha límite: ${cx.preferencias?.fechaLimite}.`;
+}
+
+async function hayTarifaVigente(cx: ContextoAgente) {
+  if (!cx.perfil) return false;
+  const r = await (await oltp()).request().input('c', sql.Int, cx.perfil.carreraId).input('e', sql.VarChar(50), cx.perfil.etapa).query(`
+    SELECT TOP 1 tarifa_id FROM dbo.TARIFA WHERE carrera_id = @c AND activo = 1
+      AND (etapa_academica IS NULL OR etapa_academica = @e)
+      AND vigente_desde <= CAST(SYSDATETIME() AS DATE) AND (vigente_hasta IS NULL OR vigente_hasta >= CAST(SYSDATETIME() AS DATE))`);
+  return !!r.recordset[0];
+}
+
+function recortar(texto: string | null | undefined, maximo: number) {
+  const limpio = String(texto ?? 'No registrado').replace(/\s+/g, ' ').trim();
+  return limpio.length <= maximo ? limpio : `${limpio.slice(0, Math.max(0, maximo - 1)).trimEnd()}…`;
+}
+
+async function resumenDerivacion(tx: sql.Transaction, cx: ContextoAgente, motivo: string, detalle: string) {
+  const ultimo = await new sql.Request(tx).input('c', sql.Int, cx.conversacionId).query(`
+    SELECT TOP 1 contenido FROM dbo.MENSAJE WHERE conversacion_id = @c AND emisor = 'CLIENTE'
+    ORDER BY fecha_hora DESC, mensaje_id DESC`);
+  const estudiante = `${cx.nombres} ${cx.apellidos}`.trim();
+  const academico = cx.perfil ? `${cx.perfil.carrera} / ${cx.perfil.universidad} / ${cx.perfil.etapa}` : 'No registrado';
+  const diagnostico = cx.diagnostico ? `${cx.diagnostico.tema ?? 'No registrado'} / avance ${cx.diagnostico.avance ?? 'No registrado'}%` : 'No registrado';
+  const propuesta = cx.propuesta ? `${cx.propuesta.servicio}, versión ${cx.propuesta.version}, S/ ${cx.propuesta.precioFinal.toFixed(2)}` : 'No hay propuesta vigente';
+  const objeciones = cx.objecionesPendientes.length ? cx.objecionesPendientes.map((o) => `${o.tipo} (${o.veces})`).join(', ') : 'Ninguna pendiente';
+  return [
+    `Estudiante: ${recortar(estudiante, 90)}`,
+    `Carrera/universidad/etapa: ${recortar(academico, 170)}`,
+    `Tema/avance: ${recortar(diagnostico, 180)}`,
+    `Propuesta vigente: ${recortar(propuesta, 150)}`,
+    `Objeciones: ${recortar(objeciones, 130)}`,
+    `Motivo: ${recortar(motivo, 80)}`,
+    `Último mensaje: ${recortar(ultimo.recordset[0]?.contenido ?? detalle, 210)}`,
+    `Detalle: ${recortar(detalle, 150)}`,
+  ].join('\n').slice(0, 1000);
+}
+
+async function citaDeOportunidad(tx: sql.Transaction, oportunidadId: number, citaId: number) {
+  const r = await new sql.Request(tx).input('c', sql.Int, citaId).input('o', sql.Int, oportunidadId)
+    .query('SELECT cita_id, oportunidad_id FROM dbo.CITA_VIRTUAL WITH (UPDLOCK) WHERE cita_id = @c AND oportunidad_id = @o');
+  if (!r.recordset[0]) throw new ErrorNegocio('La cita no existe o no pertenece a esta oportunidad.', 404);
+}
+
+function respuestaCita(c: any, notaSinEnlace = 'El asesor enviará el enlace antes de la reunión.') {
+  return { ok: true, citaId: c?.cita_id, inicio: fechaLocalIso(new Date(c?.inicio)), fin: fechaLocalIso(new Date(c?.fin)),
+    medio: c?.medio, enlace: c?.enlace ?? null, nota: c?.enlace ? undefined : notaSinEnlace };
+}
 
 /** Registra un escalamiento y pasa la conversación a control humano (el agente deja de responder). */
 export async function escalar(cx: ContextoAgente, motivo: (typeof MOTIVOS_ESCALAMIENTO)[number] | 'BOT_NO_RESPONDE', resumen: string) {
   const destino = ['DESCUENTO_EXCEDE_TOPE', 'OBJECION_REPETIDA', 'EXCEPCION_CONTRACTUAL'].includes(motivo) ? 'COORDINACION'
     : motivo === 'RECLAMO_PAGO' ? 'ADMIN' : 'ESPECIALISTA';
   return enTransaccion(await oltp(), async (tx) => {
+    const resumenEstructurado = await resumenDerivacion(tx, cx, motivo, resumen);
     const r = await new sql.Request(tx).input('c', sql.Int, cx.conversacionId).input('l', sql.Int, cx.leadId).input('o', sql.Int, cx.oportunidadId)
-      .input('m', sql.VarChar, motivo).input('d', sql.VarChar, destino).input('r', sql.NVarChar, resumen.slice(0, 1000))
+      .input('m', sql.VarChar, motivo).input('d', sql.VarChar, destino).input('r', sql.NVarChar, resumenEstructurado)
       .query(`INSERT dbo.ESCALAMIENTO (conversacion_id, lead_id, oportunidad_id, motivo, destino_rol, resumen_entregado, estado, resumen)
               OUTPUT INSERTED.escalamiento_id VALUES (@c, @l, @o, @m, @d, 1, 'PENDIENTE', @r);
               UPDATE dbo.CONVERSACION SET estado = 'DERIVADA', control_humano = 1, resuelta_sin_humano = 0 WHERE conversacion_id = @c;`);
-    if (cx.oportunidadId) await registrarEvento(tx, cx.oportunidadId, 'ESCALAMIENTO', 'AGENTE', `${motivo}: ${resumen.slice(0, 300)}`);
+    if (cx.oportunidadId) await registrarEvento(tx, cx.oportunidadId, 'ESCALAMIENTO', 'AGENTE', resumenEstructurado.slice(0, 300));
     return { escalamientoId: r.recordset[0].escalamiento_id as number, destino };
   });
 }
@@ -80,7 +147,78 @@ export const HERRAMIENTAS = {
       const { cargarContexto } = await import('./contexto.js');
       const n = await cargarContexto(cx.conversacionId);
       return { consentimiento: n.consentimiento, estado: n.estado, perfil: n.perfil, preferencias: n.preferencias, diagnostico: n.diagnostico,
-        propuesta: n.propuesta, servicios: n.servicios, citaProxima: n.citaProxima, objecionesPendientes: n.objecionesPendientes };
+        propuesta: n.propuesta, citaProxima: n.citaProxima, objecionesPendientes: n.objecionesPendientes };
+    },
+  }),
+
+  consultar_catalogo: h({
+    def: { nombre: 'consultar_catalogo', descripcion: 'Lista servicios activos con tarifa vigente para la carrera y etapa del estudiante. Devuelve solo precio base público; no devuelve precio mínimo ni tope de descuento.',
+      esquema: objeto({}, []) },
+    entrada: z.object({}).passthrough(),
+    async ejecutar(cx) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      if (!cx.perfil) return { ok: false, error: 'Falta carrera o etapa académica para consultar una tarifa.' };
+      const r = await (await oltp()).request().input('o', sql.Int, oportunidadId).input('c', sql.Int, cx.perfil.carreraId)
+        .input('e', sql.VarChar(50), cx.perfil.etapa).query(`
+          WITH vigentes AS (
+            SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.servicio_id ORDER BY CASE WHEN t.etapa_academica = @e THEN 0 ELSE 1 END,
+              t.vigente_desde DESC, t.tarifa_id DESC) AS rn
+            FROM dbo.TARIFA t
+            WHERE t.activo = 1 AND t.carrera_id = @c AND (t.etapa_academica IS NULL OR t.etapa_academica = @e)
+              AND t.vigente_desde <= CAST(SYSDATETIME() AS DATE)
+              AND (t.vigente_hasta IS NULL OR t.vigente_hasta >= CAST(SYSDATETIME() AS DATE))
+          )
+          SELECT s.servicio_id, s.nombre, s.familia, s.paquete, s.modalidad, s.tipo_servicio, v.precio_base
+          FROM dbo.SERVICIO s JOIN vigentes v ON v.servicio_id = s.servicio_id AND v.rn = 1
+          WHERE s.activo = 1 ORDER BY s.familia, s.nombre`);
+      if (!r.recordset.length) {
+        await escalar(cx, 'PRECIO_NO_CONFIGURADO', `No hay tarifa vigente para carrera ${cx.perfil.carreraId}, etapa ${cx.perfil.etapa}.`);
+        return { ok: false, error: 'No hay tarifa vigente para la carrera y etapa del estudiante. Se derivó a una persona.' };
+      }
+      return { ok: true, servicios: r.recordset.map((x: any) => ({ id: x.servicio_id, nombre: x.nombre, familia: x.familia,
+        paquete: x.paquete, modalidad: x.modalidad, tipo: x.tipo_servicio, precio_base: Number(x.precio_base) })) };
+    },
+  }),
+
+  detalle_servicio: h({
+    def: { nombre: 'detalle_servicio', descripcion: 'Devuelve entregables, límites y extras de un servicio del catálogo para esta oportunidad. Solo usa datos de la base.',
+      esquema: objeto({ servicio_id: { type: 'integer', description: 'Id devuelto por consultar_catalogo.' } }, ['servicio_id']) },
+    entrada: z.object({ servicio_id: z.number().int().positive() }),
+    async ejecutar(cx, e) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      const r = await (await oltp()).request().input('o', sql.Int, oportunidadId).input('s', sql.Int, e.servicio_id)
+        .input('c', sql.Int, cx.perfil?.carreraId ?? 0).input('et', sql.VarChar(50), cx.perfil?.etapa ?? null).query(`
+          SELECT s.servicio_id, s.nombre, s.familia, s.paquete, s.modalidad, s.tipo_servicio, s.precio_referencia,
+                 se.entregable_id, se.cantidad_incluida, se.umbral_pct, se.frecuencia_dias, se.duracion_min,
+                 e.nombre AS entregable, e.tipo_entregable, e.descripcion, e.precio_extra, se.precio_unidad_extra
+          FROM dbo.SERVICIO s
+          LEFT JOIN dbo.SERVICIO_ENTREGABLE se ON se.servicio_id = s.servicio_id
+          LEFT JOIN dbo.ENTREGABLE e ON e.entregable_id = se.entregable_id AND e.tipo_entregable <> 'EXTRA'
+          WHERE s.servicio_id = @s AND s.activo = 1
+            AND EXISTS (SELECT 1 FROM dbo.TARIFA t WHERE t.servicio_id = s.servicio_id AND t.carrera_id = @c AND t.activo = 1
+              AND (t.etapa_academica IS NULL OR t.etapa_academica = @et)
+              AND t.vigente_desde <= CAST(SYSDATETIME() AS DATE) AND (t.vigente_hasta IS NULL OR t.vigente_hasta >= CAST(SYSDATETIME() AS DATE)))
+          ORDER BY se.entregable_id;
+          SELECT e.entregable_id, e.nombre AS entregable, e.descripcion, e.precio_extra,
+                 COALESCE(se.precio_unidad_extra, e.precio_extra) AS precio_unidad_extra
+          FROM dbo.ENTREGABLE e
+          LEFT JOIN dbo.SERVICIO_ENTREGABLE se ON se.entregable_id = e.entregable_id AND se.servicio_id = @s
+          WHERE e.tipo_entregable = 'EXTRA' AND e.activo = 1
+          ORDER BY e.entregable_id`);
+      const recordsets = r.recordsets as sql.IRecordSet<any>[];
+      const filas = recordsets[0], extrasCatalogo = recordsets[1];
+      if (!filas.length) return { ok: false, error: 'Ese servicio no está disponible con tarifa vigente para esta oportunidad.' };
+      const first = filas[0];
+      return { ok: true, servicio: { id: first.servicio_id, nombre: first.nombre, familia: first.familia, paquete: first.paquete,
+        modalidad: first.modalidad, tipo: first.tipo_servicio },
+        entregables: filas.filter((x: any) => x.tipo_entregable && x.tipo_entregable !== 'EXTRA').map((x: any) => ({
+          entregable_id: x.entregable_id, nombre: x.entregable, cantidad_incluida: x.cantidad_incluida, descripcion: x.descripcion,
+          umbral_pct: x.umbral_pct, frecuencia_dias: x.frecuencia_dias, duracion_min: x.duracion_min })),
+        extras: extrasCatalogo.map((x: any) => ({ entregable_id: x.entregable_id,
+          nombre: x.entregable, descripcion: x.descripcion, precio_unidad_extra: Number(x.precio_unidad_extra ?? x.precio_extra) })),
+        limites_alcance: filas.filter((x: any) => x.tipo_entregable && x.tipo_entregable !== 'EXTRA').map((x: any) => ({
+          entregable_id: x.entregable_id, cantidad_incluida: x.cantidad_incluida, umbral_pct: x.umbral_pct,
+          frecuencia_dias: x.frecuencia_dias, duracion_min: x.duracion_min })) };
     },
   }),
 
@@ -207,6 +345,53 @@ export const HERRAMIENTAS = {
     },
   }),
 
+  entregar_diagnostico: h({
+    def: { nombre: 'entregar_diagnostico', descripcion: 'Entrega el diagnóstico de esta oportunidad cuando todos sus datos están completos y no requiere derivación. Registra fecha_entrega y devuelve un resumen basado únicamente en los datos guardados.',
+      esquema: objeto({}, []) },
+    entrada: z.object({}).passthrough(),
+    async ejecutar(cx) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      const d = datosDiagnostico(cx);
+      if (!d) return { ok: false, faltan: ['diagnóstico solicitado'] };
+      if (cx.diagnostico!.estado === 'ENTREGADO') return { ok: false, error: 'El diagnóstico ya fue entregado.', diagnosticoId: cx.diagnostico!.id };
+      if (cx.diagnostico!.requiereDerivacion) {
+        await escalar(cx, 'CONSULTA_ACADEMICA_COMPLEJA', 'El diagnóstico requiere revisión de una persona especialista antes de entregarse.');
+        return { ok: false, derivado: true, error: 'El diagnóstico requiere revisión de un especialista; se derivó la conversación.' };
+      }
+      const faltan = faltantesDiagnostico(d);
+      if (faltan.length) return { ok: false, faltan, error: 'Completa esos datos antes de entregar el diagnóstico.' };
+      const resumen = resumenDiagnostico(cx);
+      const r = await enTransaccion(await oltp(), (tx) => entregarDiagnostico(tx, cx.diagnostico!.id, resumen, 'AGENTE', oportunidadId));
+      return { ok: true, diagnosticoId: cx.diagnostico!.id, fecha_entrega: r.fechaEntrega, horas_desde_solicitud: Number(r.horas.toFixed(2)), resumen,
+        siguiente: 'Verificar requisitos mínimos con calificar_aptitud antes de cotizar.' };
+    },
+  }),
+
+  calificar_aptitud: h({
+    def: { nombre: 'calificar_aptitud', descripcion: 'Verifica los requisitos mínimos y pasa la oportunidad de EN_DIAGNOSTICO a APTA_PARA_COTIZAR. No cotiza ni expone precios internos.',
+      esquema: objeto({}, []) },
+    entrada: z.object({}).passthrough(),
+    async ejecutar(cx) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      if (cx.estado !== 'EN_DIAGNOSTICO') return { ok: false, error: `La aptitud solo se verifica en EN_DIAGNOSTICO; estado actual: ${cx.estado ?? 'sin estado'}.` };
+      const d = datosDiagnostico(cx);
+      if (!d || cx.diagnostico!.estado !== 'ENTREGADO') return { ok: false, faltan: ['diagnóstico entregado'] };
+      if (cx.diagnostico!.requiereDerivacion) {
+        await escalar(cx, 'CONSULTA_ACADEMICA_COMPLEJA', 'El diagnóstico requiere evaluación de una persona; el agente no puede calificar la aptitud.');
+        return { ok: false, derivado: true, error: 'La aptitud será revisada por un especialista.' };
+      }
+      const faltan = faltantesDiagnostico(d);
+      if (faltan.length) return { ok: false, faltan, error: 'Faltan requisitos mínimos para calificar la aptitud.' };
+      if (!cx.perfil) return { ok: false, faltan: ['universidad, carrera y etapa académica'] };
+      if (!await hayTarifaVigente(cx)) {
+        await escalar(cx, 'PRECIO_NO_CONFIGURADO', `No hay tarifa vigente para ${cx.perfil.carrera} en la etapa ${cx.perfil.etapa}.`);
+        return { ok: false, derivado: true, error: 'No hay tarifa vigente para esta carrera y etapa; se derivó a una persona.' };
+      }
+      await enTransaccion(await oltp(), (tx) => calificarAptitud(tx, oportunidadId, 'AGENTE'));
+      return { ok: true, estado: 'APTA_PARA_COTIZAR', siguiente: 'Ya se puede consultar el catálogo y cotizar.' };
+    },
+  }),
+
   simular_cotizacion: h({
     def: { nombre: 'simular_cotizacion', descripcion: 'Calcula una cotización SIN guardarla (motor de precios: base + extras + recargos − descuentos, con tope de descuento y precio mínimo). Úsala para responder "¿cuánto cuesta?" o para evaluar un descuento pedido antes de presentarlo. Si "bloqueada" es true, el descuento pedido excede lo permitido: no lo ofrezcas.',
       esquema: objeto(parametrosCotizacion, ['servicio_id']) },
@@ -215,6 +400,7 @@ export const HERRAMIENTAS = {
       const s = await simularCotizacion(await oltp(), solicitud(cx, e));
       const q = s.cotizacion;
       return { servicio: s.servicio.nombre, precio_base: q.precioBase, extras: q.montoExtras, recargos: q.recargo, descuentos: q.descuento,
+        extras_detalle: q.extras.map((x) => ({ entregable_id: x.entregableId, nombre: x.nombre, cantidad: x.cantidad, precio_unidad: x.precioUnitario })),
         precio_final: q.precioFinal, ajustes: q.ajustes.map((a) => ({ concepto: a.concepto, tipo: a.tipo, monto: a.monto })),
         bloqueada: s.bloqueada, avisos: s.avisos };
     },
@@ -228,6 +414,7 @@ export const HERRAMIENTAS = {
       const r = await enTransaccion(await oltp(), (tx) => presentarPropuesta(tx, solicitud(cx, e), { origen: 'AGENTE', asesorId: null }));
       const q = r.cotizacion;
       return { ok: true, version: r.version, precio_final: r.precioFinal, precio_base: q.precioBase, extras: q.montoExtras, recargos: q.recargo,
+        extras_detalle: q.extras.map((x) => ({ entregable_id: x.entregableId, nombre: x.nombre, cantidad: x.cantidad, precio_unidad: x.precioUnitario })),
         descuentos: q.descuento, ajustes: q.ajustes.map((a) => ({ concepto: a.concepto, tipo: a.tipo, monto: a.monto })), vigencia: '7 días' };
     },
   }),
@@ -328,7 +515,38 @@ export const HERRAMIENTAS = {
       const asesorId = await asesorComercial(cx);
       const inicio = new Date(e.inicio.slice(0, 16));          // hora local del servidor = hora de Perú
       const r = await enTransaccion(await oltp(), (tx) => agendarCita(tx, { oportunidadId, asesorId, inicio, duracionMin: 45, medio: e.medio }, 'AGENTE'));
-      return { ok: true, citaId: r.citaId, inicio: fechaLocalIso(inicio), medio: e.medio, duracion: '45 minutos' };
+      return { ok: true, citaId: r.citaId, inicio: fechaLocalIso(inicio), medio: e.medio, duracion: '45 minutos', enlace: r.enlace,
+        nota: r.enlace ? undefined : 'El asesor enviará el enlace antes de la reunión.' };
+    },
+  }),
+
+  cancelar_cita: h({
+    def: { nombre: 'cancelar_cita', descripcion: 'Cancela una cita futura de esta oportunidad. Registra historial y evento.',
+      esquema: objeto({ cita_id: { type: 'integer' }, causa: { type: 'string' } }, ['cita_id']) },
+    entrada: z.object({ cita_id: z.number().int().positive(), causa: z.string().trim().min(3).max(300).default('Cancelada por el estudiante') }),
+    async ejecutar(cx, e) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      const r = await enTransaccion(await oltp(), async (tx) => {
+        await citaDeOportunidad(tx, oportunidadId, e.cita_id);
+        const cita = await cambiarEstadoCita(tx, e.cita_id, 'CANCELADA', e.causa, 'AGENTE');
+        return cita;
+      });
+      return { ok: true, citaId: e.cita_id, estado: r?.estado ?? 'CANCELADA' };
+    },
+  }),
+
+  reprogramar_cita: h({
+    def: { nombre: 'reprogramar_cita', descripcion: 'Reprograma una cita solicitada o confirmada de esta oportunidad. Rechaza horarios solapados y registra historial y evento.',
+      esquema: objeto({ cita_id: { type: 'integer' }, inicio: { type: 'string', description: 'AAAA-MM-DDTHH:mm en hora de Perú.' }, duracion_min: { type: 'integer', minimum: 15, maximum: 180 } }, ['cita_id', 'inicio']) },
+    entrada: z.object({ cita_id: z.number().int().positive(), inicio: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/), duracion_min: z.number().int().min(15).max(180).default(45) }),
+    async ejecutar(cx, e) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      const inicio = new Date(e.inicio.slice(0, 16));
+      const r = await enTransaccion(await oltp(), async (tx) => {
+        await citaDeOportunidad(tx, oportunidadId, e.cita_id);
+        return reprogramarCita(tx, e.cita_id, inicio, e.duracion_min, 'AGENTE');
+      });
+      return respuestaCita(r, 'El asesor enviará el enlace antes de la reunión.');
     },
   }),
 
@@ -381,7 +599,8 @@ export async function ejecutarHerramienta(cx: ContextoAgente, nombre: string, en
     ok = !(resultado && typeof resultado === 'object' && (resultado as any).ok === false);
     // Mantiene el contexto al día dentro del mismo turno (p. ej. tras otorgar consentimiento).
     if (ok && ['registrar_consentimiento', 'registrar_perfil_academico', 'solicitar_diagnostico', 'actualizar_diagnostico_pendiente',
-      'presentar_propuesta', 'registrar_respuesta_propuesta'].includes(nombre)) {
+      'entregar_diagnostico', 'calificar_aptitud',
+      'presentar_propuesta', 'registrar_respuesta_propuesta', 'agendar_cita', 'cancelar_cita', 'reprogramar_cita'].includes(nombre)) {
       const { cargarContexto } = await import('./contexto.js');
       Object.assign(cx, await cargarContexto(cx.conversacionId));
     }

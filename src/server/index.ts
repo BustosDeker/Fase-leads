@@ -17,10 +17,13 @@ import { rutasIntegraciones } from './rutas-integraciones.js';
 import { rutasAuth } from './auth.js';
 import { rutasEvidencias } from './rutas-evidencias.js';
 import { resumenEstado as estadoWhatsApp } from '../whatsapp/openwa.js';
-import { estadoAgente } from '../agente/motor.js';
+import { estadoAgente, obtenerProveedor } from '../agente/motor.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
+import { iniciarSchedulerSeguimiento } from '../agente/seguimiento.js';
 
 const app = Fastify({ logger: { level: 'info' } });
+// Valida proveedor, clave y modelo al arrancar; si falta una clave, queda explícito que se usa mock.
+obtenerProveedor();
 
 // Errores amigables: validación (400) y SQL Server caído (503) con pasos a seguir.
 app.setErrorHandler((err, _req, reply) => {
@@ -58,6 +61,7 @@ rutasAgente(app);
 rutasWhatsApp(app);
 rutasIntegraciones(app);
 rutasEvidencias(app);
+iniciarSchedulerSeguimiento();
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');

@@ -50,6 +50,7 @@ const AUTO = {
   OPENWA_WEBHOOK_SECRET: () => secreto(32),
   PAYERS_TOKEN: () => secreto(32),
   BUYERS_TOKEN: () => secreto(32),
+  AGENTE_API_TOKEN: () => secreto(32),
 };
 let env = fs.existsSync(envPath)
   ? fs.readFileSync(envPath, 'utf8')

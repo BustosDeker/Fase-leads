@@ -41,6 +41,9 @@ No se modifica ninguna tabla de BUYERS ni ninguna regla del informe. Lo que se a
 | `OPORTUNIDAD_EVENTO` | Línea de tiempo de la ficha nominal (cada transición y evento con fecha y origen). |
 | `AGENTE_TURNO` | Auditoría del agente: mensaje de entrada/salida, tools invocadas, latencia, proveedor y modelo, sospecha de inyección. |
 | Índices de apoyo | Búsqueda por nombre, agenda por asesor y oportunidades por lead. |
+| `CITA_VIRTUAL.enlace` | **Ampliación OLTP B1:** `NVARCHAR(300) NULL`, agregada en la sección 10 de `db/oltp/02_ampliacion_app.sql`, porque Tabla 7 exige comunicar horario, medio y enlace. Las citas existentes permanecen sin enlace. |
+
+Los enlaces no se inventan ni se generan desde el agente: `CITA_ENLACE_GOOGLE_MEET` y `CITA_ENLACE_ZOOM` son variables opcionales de `.env` para una sala fija de la empresa o del asesor. Si faltan, la cita se guarda y se comunica que el asesor enviará el enlace antes de la reunión. Las lecturas exponen `enlace` como campo opcional para mantener compatibilidad con clientes anteriores.
 
 Inconsistencia corregida durante la verificación: el nombre de restricción `FK_CONV_OPORT` ya lo usa el Anexo A en `CONVERSION_PAYER_REF`; la FK nueva de `CONVERSACION` se llama `FK_CONVERSACION_OPORT`.
 
@@ -146,10 +149,11 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - **Las herramientas no reciben ids.** Siempre actúan sobre la oportunidad de la conversación en curso: el modelo no puede tocar datos de otra persona aunque se lo pidan.
 - **El precio nunca lo escribe el modelo.** La salida se revisa: cualquier monto «S/» que no haya salido de una herramienta en ese turno (o de la propuesta vigente) reemplaza la respuesta por un mensaje seguro y queda anotado en el turno.
 - **Consentimiento primero (Ley 29733).** Sin consentimiento solo se permiten pedirlo, consultar la situación o derivar; el servidor rechaza las demás herramientas.
-- **Diagnóstico y aptitud siguen siendo humanos.** El agente solicita el diagnóstico; un especialista lo entrega y califica la aptitud en «Diagnósticos». Así la medición de plazos (48 h y 2 h) es real.
+- **Diagnóstico y aptitud:** `entregar_diagnostico` solo entrega cuando los datos mínimos están completos y `requiere_derivacion = 0`; `calificar_aptitud` exige diagnóstico ENTREGADO, vuelve a verificar los mínimos y registra la transición a `APTA_PARA_COTIZAR`. Ambas acciones usan las funciones de negocio existentes, por lo que `fecha_entrega` y `fecha_apta_cotizar` quedan registradas para K1/K2. Las rutas humanas siguen disponibles y se derivan los casos que requieren criterio humano.
+- **Derivación estructurada:** `ESCALAMIENTO.resumen` se compone con estudiante, perfil académico, tema/avance, propuesta, objeciones, motivo, último mensaje y detalle, con recorte determinista a 1000 caracteres. Al devolver el control, el contexto del agente deja constancia de que una persona atendió la conversación.
 - **Derivar detiene al agente.** Un escalamiento pasa la conversación a `DERIVADA` con `control_humano = 1`; el asesor la devuelve desde Conversaciones.
 - **Alta de estudiantes desde el chat.** Un número nuevo crea CONTACTO → BUYER → LEAD → OPORTUNIDAD (`ABIERTA`). En el simulador se marcan `es_demo = 1` y `seed:reset` los borra.
-- **Claude:** SDK oficial, `claude-opus-5-5` por defecto, esfuerzo `medium` configurable (`LLM_EFFORT`), bloque de reglas cacheado y respaldo de servidor ante una negativa por política (`fallbacks: "default"`).
+- **Claude:** SDK oficial, `claude-haiku-5-5` por defecto, esfuerzo `medium` configurable (`LLM_EFFORT`), bloque de reglas cacheado y fallback beta opcional, desactivado por defecto.
 - **zod 3.24 → 3.25** porque el SDK de Anthropic lo pide como dependencia opcional (misma versión mayor, sin cambios en el código).
 
 ## 15. WhatsApp con OpenWA (E6)
@@ -183,3 +187,31 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - Se envía una **plantilla** registrada en `PLANTILLA_MENSAJE` («Primer contacto LEADS»), guardada como `MENSAJE.tipo = 'PLANTILLA'` fuera de la ventana de 24 h, que es lo que exige `CK_MENSAJE_VENTANA`. El mensaje incluye cómo pedir que no le escriban más.
 - **Se envía antes de registrar:** si WhatsApp falla, no queda en la base un mensaje que nunca salió.
 - Cuando el estudiante responde, WhatsApp puede identificar el chat con un id de privacidad (`@lid`). La app une la respuesta a la conversación ya abierta usando el número real (`RESOLVE_LID_TO_PHONE`).
+- **Multimedia:** audios, stickers, imágenes y documentos se registran como una descripción textual (`AUDIO` o `ARCHIVO`) y reciben una cortesía sin llamar al agente. La transcripción es opcional (`TRANSCRIPCION_AUDIO=true`), usa Gemini solo si hay clave y datos multimedia disponibles en el evento, y nunca persiste el binario.
+
+## 15.1 Agrupación, memoria y límites del agente
+
+- `AGENTE_DEBOUNCE_MS` agrupa mensajes consecutivos del mismo estudiante antes de ejecutar un único turno; el guardado, la deduplicación por `id_externo` y la cola siguen siendo por conversación. El simulador espera la misma respuesta HTTP, aunque solo el primer mensaje del grupo recibe la respuesta del turno.
+- `AGENTE_RESUMEN_CADA` genera un resumen breve con el mismo proveedor configurado y lo guarda únicamente en un `Map` del proceso. Al reiniciar se regenera desde el historial textual; el estado comercial, precios y datos de consentimiento siempre vienen del OLTP.
+- `AGENTE_MAX_TURNOS_HORA` limita los turnos automáticos; al superar el límite se registra un único escalamiento `INCERTIDUMBRE_AGENTE` y no se llama al modelo.
+
+## 15.2 Proveedor Groq compatible con OpenAI
+
+- Se reutiliza el adaptador de Chat Completions de OpenAI con `GROQ_BASE_URL` y, por defecto, `https://api.groq.com/openai/v1`. Desde agosto de 2026 el modelo predeterminado es `openai/gpt-oss-20b`, documentado por Groq con local tool calling; `llama-3.3-70b-versatile` quedó retirado.
+- `retry-after` se respeta en los dos reintentos para 429/5xx. Ante 413 o 429 persistente en Groq se recorta una vez el historial y se reintenta; si continúa fallando, el motor deriva con `BOT_NO_RESPONDE` sin exponer clave ni cuerpo de respuesta.
+- No se agregan columnas ni cambios de BD. La configuración de prueba gratuita exige datos ficticios; los límites exactos de Groq son los publicados para cada organización y modelo en su consola.
+
+## 15.3 Seguimiento proactivo de LEADS (convención B3)
+
+- `SEGUIMIENTO_LEAD` no cambia de esquema. `fecha_accion` representa la fecha real de envío o una fecha futura cuando el intento queda programado; `resultado` solo se considera válido para la cadencia si es `PROGRAMADO`, `ENVIADO`, `BLOQUEADO_VENTANA`, `BLOQUEADO_CONSENTIMIENTO`, `SIN_RESPUESTA` o `RESPONDIO`. El generador sintético antiguo usa `Sin respuesta`, `Lo está evaluando` y `Pidió más información`; esos valores no cuentan como intentos.
+- La cadencia por defecto es 24 y 72 horas desde el último mensaje del estudiante, con dos intentos por oportunidad. Un `PROGRAMADO` futuro bloquea duplicados pero no consume un intento hasta que se ejecuta y pasa a `ENVIADO`. Se respeta el horario 08:00–21:00 de `America/Lima`, la ventana de WhatsApp de 24 horas y el consentimiento vigente.
+- Fuera de ventana solo se usa una plantilla activa aprobada por Meta de categoría `PROPUESTA` u `OTRO`. Las plantillas sembradas tienen `aprobada_meta = 0`; deben aprobarse en Meta o marcarse explícitamente para pruebas locales.
+- El scheduler interno es opcional (`SEGUIMIENTO_INTERNO=false` por defecto); el diseño final deja el disparo a n8n mediante `AGENTE_API_TOKEN`. La ejecución usa `sp_getapplock` y una comprobación transaccional para evitar envíos duplicados.
+
+## 15.4 Orquestación opcional con n8n
+
+- n8n no contiene el cerebro del agente: solo dispara el seguimiento cada 15 minutos y consulta derivaciones pendientes cada 5 minutos. Puede ejecutarse localmente con Node 22 mediante `npx n8n` o `npm run n8n`; no se agrega como dependencia obligatoria ni requiere Docker. Los workflows empiezan con un nodo `Config` editable y usan `http://127.0.0.1:3100` para evitar resoluciones IPv6 de `localhost`.
+- n8n 2.x no se configura mediante `$env` dentro de estos workflows. La autenticación se resuelve con una credencial n8n `Header Auth` llamada `INBESTIGA agente`, cuyo valor es `Bearer <AGENTE_API_TOKEN>` y nunca se exporta en el JSON.
+- Los endpoints de n8n exigen `Authorization: Bearer <AGENTE_API_TOKEN>` incluso en localhost. El endpoint de derivaciones devuelve como máximo 100 registros y no expone teléfonos, correos, claves ni datos de pago.
+- El evaluador final usa doce guiones con datos ficticios y limpia sus fixtures por IDs al terminar. Con `mock` ejecuta solo casos deterministas y marca los demás como `requiere IA real`; con un proveedor real intenta todos. Para Groq, la evaluación completa puede exceder el TPM gratuito: se recomienda validar la lógica con `mock` y reservar Groq para 2–3 conversaciones de muestra.
+- `/api/agente/derivaciones/pendientes` acepta `desde_id`; el workflow guarda el último identificador en Static Data de n8n, sin modificar la BD para controlar avisos repetidos. Los nodos de correo se importan desactivados y las credenciales se configuran fuera del repositorio.

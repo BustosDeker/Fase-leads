@@ -18,6 +18,28 @@ export const esquemaCita = z.object({
   medio: z.enum(['Google Meet', 'Zoom', 'Llamada de WhatsApp']).default('Google Meet'),
 });
 
+/** Sala fija configurada por la empresa/asesor. Nunca se genera una URL en código. */
+export function enlaceConfigurado(medio: z.infer<typeof esquemaCita>['medio']): string | null {
+  if (medio === 'Google Meet') return process.env.CITA_ENLACE_GOOGLE_MEET?.trim() || null;
+  if (medio === 'Zoom') return process.env.CITA_ENLACE_ZOOM?.trim() || null;
+  return null;
+}
+
+async function tieneColumnaEnlace(tx: sql.Transaction) {
+  const r = await new sql.Request(tx).query("SELECT CASE WHEN COL_LENGTH('dbo.CITA_VIRTUAL', 'enlace') IS NULL THEN 0 ELSE 1 END AS existe");
+  return !!r.recordset[0]?.existe;
+}
+
+async function leerCita(tx: sql.Transaction, citaId: number) {
+  const conEnlace = await tieneColumnaEnlace(tx);
+  const enlace = conEnlace ? 'enlace' : 'CAST(NULL AS NVARCHAR(300)) AS enlace';
+  const r = await new sql.Request(tx).input('c', sql.Int, citaId).query(`
+    SELECT cita_id, oportunidad_id, asesor_id, inicio, fin, medio, estado, ${enlace}
+    FROM dbo.CITA_VIRTUAL WHERE cita_id = @c`);
+  return r.recordset[0] as { cita_id: number; oportunidad_id: number; asesor_id: number; inicio: Date; fin: Date;
+    medio: string; estado: string; enlace: string | null } | undefined;
+}
+
 async function haySolapamiento(tx: sql.Transaction, asesorId: number, inicio: Date, fin: Date, excluirCita?: number) {
   const r = await new sql.Request(tx).input('a', sql.Int, asesorId).input('i', sql.DateTime2, inicio).input('f', sql.DateTime2, fin)
     .input('x', sql.Int, excluirCita ?? null)
@@ -31,14 +53,19 @@ export async function agendarCita(tx: sql.Transaction, c: z.infer<typeof esquema
   if (c.inicio.getTime() < Date.now() - 60_000) throw new ErrorNegocio('No se puede agendar en el pasado.');
   const choque = await haySolapamiento(tx, c.asesorId, c.inicio, fin);
   if (choque) throw new ErrorNegocio(`El asesor ya tiene la cita #${choque.cita_id} en ese horario. Elige otro horario.`, 409);
+  const conEnlace = await tieneColumnaEnlace(tx);
+  const enlace = enlaceConfigurado(c.medio);
   const r = await new sql.Request(tx).input('o', sql.Int, c.oportunidadId).input('a', sql.Int, c.asesorId).input('i', sql.DateTime2, c.inicio)
-    .input('f', sql.DateTime2, fin).input('m', sql.VarChar, c.medio)
-    .query(`INSERT dbo.CITA_VIRTUAL (oportunidad_id, asesor_id, inicio, fin, medio, estado) OUTPUT INSERTED.cita_id
-            VALUES (@o, @a, @i, @f, @m, 'SOLICITADA')`);
+    .input('f', sql.DateTime2, fin).input('m', sql.VarChar, c.medio).input('e', sql.NVarChar(300), enlace)
+    .query(conEnlace
+      ? `INSERT dbo.CITA_VIRTUAL (oportunidad_id, asesor_id, inicio, fin, medio, estado, enlace) OUTPUT INSERTED.cita_id
+         VALUES (@o, @a, @i, @f, @m, 'SOLICITADA', @e)`
+      : `INSERT dbo.CITA_VIRTUAL (oportunidad_id, asesor_id, inicio, fin, medio, estado) OUTPUT INSERTED.cita_id
+         VALUES (@o, @a, @i, @f, @m, 'SOLICITADA')`);
   const citaId: number = r.recordset[0].cita_id;
   await historial(tx, citaId, null, 'SOLICITADA', origen === 'AGENTE' ? 'Propuesta por el agente y aceptada por el estudiante' : 'Registrada por un asesor');
   await registrarEvento(tx, c.oportunidadId, 'CITA_SOLICITADA', origen, `${c.inicio.toLocaleString('es-PE')} · ${c.medio}`);
-  return { citaId, fin };
+  return { citaId, inicio: c.inicio, fin, medio: c.medio, enlace: conEnlace ? enlace : null };
 }
 
 export async function cambiarEstadoCita(tx: sql.Transaction, citaId: number, nuevo: string, causa: string, origen: Origen) {
@@ -52,6 +79,7 @@ export async function cambiarEstadoCita(tx: sql.Transaction, citaId: number, nue
             WHERE cita_id = @c`);
   await historial(tx, citaId, cita.estado, nuevo, causa);
   await registrarEvento(tx, cita.oportunidad_id, `CITA_${nuevo}`, origen, causa);
+  return leerCita(tx, citaId);
 }
 
 export async function reprogramarCita(tx: sql.Transaction, citaId: number, inicio: Date, duracionMin: number, origen: Origen) {
@@ -60,6 +88,7 @@ export async function reprogramarCita(tx: sql.Transaction, citaId: number, inici
   const cita = r.recordset[0];
   if (!cita) throw new ErrorNegocio('La cita no existe.', 404);
   if (!['SOLICITADA', 'CONFIRMADA'].includes(cita.estado)) throw new ErrorNegocio('Solo se reprograma una cita solicitada o confirmada.');
+  if (inicio.getTime() < Date.now() - 60_000) throw new ErrorNegocio('No se puede reprogramar en el pasado.');
   const fin = new Date(inicio.getTime() + duracionMin * 60_000);
   const choque = await haySolapamiento(tx, cita.asesor_id, inicio, fin, citaId);
   if (choque) throw new ErrorNegocio(`El asesor ya tiene la cita #${choque.cita_id} en ese horario.`, 409);
@@ -67,6 +96,7 @@ export async function reprogramarCita(tx: sql.Transaction, citaId: number, inici
     .query(`UPDATE dbo.CITA_VIRTUAL SET inicio = @i, fin = @f, estado = 'SOLICITADA', fecha_confirmacion = NULL WHERE cita_id = @c`);
   await historial(tx, citaId, cita.estado, 'SOLICITADA', `Reprogramada desde ${new Date(cita.inicio).toLocaleString('es-PE')}`);
   await registrarEvento(tx, cita.oportunidad_id, 'CITA_REPROGRAMADA', origen, inicio.toLocaleString('es-PE'));
+  return leerCita(tx, citaId);
 }
 
 async function historial(tx: sql.Transaction, citaId: number, anterior: string | null, nuevo: string, causa: string) {

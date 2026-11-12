@@ -9,7 +9,7 @@ import path from 'node:path';
 import { RAIZ, config } from '../config.js';
 import { oltp, sql } from '../db.js';
 import { asegurarConversacionWhatsApp } from '../agente/conversaciones.js';
-import { procesarMensajeEntrante } from '../agente/motor.js';
+import { procesarMensajeEntrante, procesarMensajeMultimedia } from '../agente/motor.js';
 import { publicar } from '../server/eventos.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
 
@@ -205,6 +205,15 @@ export function firmaValida(cuerpoCrudo: string, firma: string | undefined): boo
 
 export interface Descarte { procesado: false; motivo: string }
 
+export function clasificarMultimediaWhatsApp(tipoEntrada: unknown): { tipo: 'AUDIO' | 'ARCHIVO'; descripcion: string } | null {
+  const tipo = String(tipoEntrada ?? '').toLowerCase();
+  if (['audio', 'ptt', 'voice', 'voicenote'].includes(tipo)) return { tipo: 'AUDIO', descripcion: '[Nota de voz recibida]' };
+  if (tipo === 'sticker') return { tipo: 'ARCHIVO', descripcion: '[Sticker recibido]' };
+  if (['image', 'photo'].includes(tipo)) return { tipo: 'ARCHIVO', descripcion: '[Imagen recibida]' };
+  if (['document', 'file'].includes(tipo)) return { tipo: 'ARCHIVO', descripcion: '[Documento recibido]' };
+  return null;
+}
+
 /** Procesa un evento ya verificado. Devuelve qué se hizo (para el log y las pruebas). */
 export async function manejarEvento(evento: { event: string; data: any }): Promise<{ procesado: boolean; motivo?: string; respuesta?: string }> {
   const { event, data } = evento;
@@ -223,11 +232,11 @@ export async function manejarEvento(evento: { event: string; data: any }): Promi
   if (!contacto) return { procesado: false, motivo: `número sin lead registrado (…${numero.slice(-4)})` };
   if (!contacto.whatsapp_habilitado) return { procesado: false, motivo: 'WhatsApp no está habilitado para este lead desde la aplicación' };
   if (!contacto.consentimiento_contacto || contacto.no_contactar) return { procesado: false, motivo: 'el contacto no tiene consentimiento vigente' };
+  const tipo = String(m.type ?? '').toLowerCase();
+  const multimedia = clasificarMultimediaWhatsApp(tipo);
+  const esAudio = multimedia?.tipo === 'AUDIO';
+  const esArchivo = multimedia?.tipo === 'ARCHIVO';
   const texto = String(m.body ?? '').trim();
-  if (m.type && m.type !== 'text' && m.type !== 'chat') {
-    if (!texto) return { procesado: false, motivo: `tipo no soportado: ${m.type}` };
-  }
-  if (!texto) return { procesado: false, motivo: 'mensaje vacío' };
 
   const existente = await (await oltp()).request().input('chat', sql.VarChar, chatId)
     .query(`SELECT TOP 1 conversacion_id, contacto_id FROM dbo.CONVERSACION
@@ -237,11 +246,44 @@ export async function manejarEvento(evento: { event: string; data: any }): Promi
 
   const conv = existente.recordset[0]?.conversacion_id ?? await asegurarConversacionWhatsApp(chatId, m.contact?.pushName || m.contact?.name || null, numero);
   const idExterno = typeof m.id === 'string' ? m.id : m.id?._serialized ?? null;
-  const r = await procesarMensajeEntrante(conv, texto, idExterno);
+  let r;
+  if (esAudio || esArchivo) {
+    const descripcion = multimedia!.descripcion;
+    const transcrito = esAudio ? await transcribirAudio(m) : null;
+    r = transcrito
+      ? await procesarMensajeEntrante(conv, `[Nota de voz recibida]\nTranscripción: ${transcrito}`, idExterno)
+      : await procesarMensajeMultimedia(conv, descripcion, esAudio ? 'AUDIO' : 'ARCHIVO', idExterno);
+  } else {
+    if (tipo && tipo !== 'text' && tipo !== 'chat') return { procesado: false, motivo: `tipo no soportado: ${tipo}` };
+    if (!texto) return { procesado: false, motivo: 'mensaje vacío' };
+    r = await procesarMensajeEntrante(conv, texto, idExterno);
+  }
   if (!r.respondio || !r.respuesta) return { procesado: true, motivo: r.motivo };
   try { await enviarTexto(chatId, r.respuesta); }
   catch (e: any) { console.error('[whatsapp] no se pudo enviar la respuesta:', e.message); publicar('whatsapp', { ...resumenEstado(), errorEnvio: e.message }); }
   return { procesado: true, respuesta: r.respuesta };
+}
+
+/** Transcripción opcional: solo usa datos que OpenWA ya incluyó en el evento y nunca guarda el binario. */
+async function transcribirAudio(m: any): Promise<string | null> {
+  if (!/^(1|true|si|sí|yes)$/i.test(process.env.TRANSCRIPCION_AUDIO ?? '') || !process.env.GEMINI_API_KEY) return null;
+  const datos = m.data ?? m.media?.data ?? m.base64 ?? null;
+  if (typeof datos !== 'string' || !datos) return null;
+  const mimeType = String(m.mimetype ?? m.media?.mimetype ?? 'audio/ogg');
+  const modelo = process.env.LLM_PROVIDER === 'gemini' && /^gemini-/.test(process.env.LLM_MODEL ?? '')
+    ? process.env.LLM_MODEL! : 'gemini-2.5-flash';
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`, {
+      method: 'POST', headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: datos } },
+        { text: 'Transcribe literalmente esta nota de voz. Devuelve solo la transcripción en español, sin inventar ni añadir datos.' }] }] }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) return null;
+    const json: any = await r.json();
+    const texto = json.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('').trim();
+    return texto ? String(texto).slice(0, 2000) : null;
+  } catch { return null; }
 }
 
 /** Arranque: sincroniza al iniciar y luego cada 20 s mientras no esté conectado (OpenWA puede tardar en levantar). */
