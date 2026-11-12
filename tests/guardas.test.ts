@@ -1,7 +1,8 @@
 // Pruebas de las barreras del agente (no requieren SQL Server ni IA).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buscarCarrera, buscarUniversidad, detectarEtapa, detectarInyeccion, extraerTemaTesis, montosEn, revisarSalida } from '../src/agente/guardas.js';
+import { buscarCarrera, buscarUniversidad, detectarEtapa, detectarInyeccion, extraerAvance, extraerEstadoEmpresa, extraerFechaLimite,
+  extraerLimitaciones, extraerSede, extraerTemaTesis, extraerTipoTesis, montosEn, revisarSalida } from '../src/agente/guardas.js';
 import type { Catalogos } from '../src/agente/contexto.js';
 
 test('detecta intentos de inyección y no marca mensajes normales', () => {
@@ -51,10 +52,28 @@ test('reconoce universidad, carrera y etapa en texto libre', () => {
 test('no confunde avance y empresa con el tema de tesis', () => {
   assert.equal(extraerTemaTesis('Tengo el 10% de avance pero aún no tengo una empresa donde aplicar'), null);
   assert.equal(extraerTemaTesis('No tengo empresa donde aplicar'), null);
+  assert.equal(extraerTemaTesis('Estudio en la Universidad Nacional de Trujillo, estudio ingeniería de sistemas, estoy en X ciclo'), null);
+  assert.equal(extraerTemaTesis('No tengo tema aún y no cuento con una empresa donde aplicarla'), null);
   assert.equal(extraerTemaTesis('Mi tema es el impacto de las redes sociales en el rendimiento académico'), 'el impacto de las redes sociales en el rendimiento académico');
   assert.equal(extraerTemaTesis('Quiero investigar la relación entre el uso de redes sociales y el rendimiento académico'), 'la relación entre el uso de redes sociales y el rendimiento académico');
   assert.equal(extraerTemaTesis('Un sistema web para gestionar inventarios'), 'Un sistema web para gestionar inventarios');
   assert.equal(extraerTemaTesis('Muchas gracias'), null);
+});
+
+test('extrae y valida los datos que el agente debe recopilar para el diagnóstico', () => {
+  assert.equal(extraerTipoTesis('Mi investigación es correlacional'), 'CORRELACIONAL');
+  assert.equal(extraerTipoTesis('Todavía no sé el tipo'), 'NO_DEFINIDO');
+  assert.equal(extraerAvance('Tengo un 10% de avance'), 10);
+  assert.equal(extraerAvance('Tengo 120% de avance'), null);
+  assert.equal(extraerEstadoEmpresa('No cuento con empresa donde aplicar'), false);
+  assert.equal(extraerEstadoEmpresa('Sí, trabajo en una clínica'), true);
+  assert.equal(extraerLimitaciones('Mis limitaciones son el acceso a los datos'), 'el acceso a los datos');
+  assert.equal(extraerLimitaciones('No tengo limitaciones'), 'Ninguna indicada');
+  assert.equal(extraerFechaLimite('Mi sustentación es el 20/12/2026'), '2026-12-20');
+  assert.equal(extraerFechaLimite('La fecha de entrega aún no está definida'), 'NO_DEFINIDA');
+  assert.equal(extraerFechaLimite('31/02/2026'), null);
+  assert.equal(extraerSede('Mi sede es Trujillo'), 'Trujillo');
+  assert.equal(extraerSede('No sé mi sede'), 'No especificada');
 });
 
 test('webhook de WhatsApp: acepta solo la firma HMAC correcta', async () => {

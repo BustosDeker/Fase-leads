@@ -6,7 +6,7 @@ import { ErrorNegocio, oportunidadBloqueada, registrarEvento, transicionar, type
 export const esquemaSolicitudDiagnostico = z.object({
   oportunidadId: z.number().int().positive(),
   temaTesis: z.string().max(250).optional(),
-  tipoTesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA']).optional(),
+  tipoTesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO']).optional(),
   avanceDeclarado: z.number().min(0).max(100).optional(),
   tieneEmpresaAplicacion: z.boolean().optional(),
   limitaciones: z.string().max(300).optional(),

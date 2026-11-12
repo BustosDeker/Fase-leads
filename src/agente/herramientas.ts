@@ -29,6 +29,17 @@ function exigirOportunidad(cx: ContextoAgente) {
   return { oportunidadId: cx.oportunidadId, leadId: cx.leadId };
 }
 
+async function guardarFechaLimiteDiagnostico(tx: sql.Transaction, cx: ContextoAgente, fechaLimite: string | null) {
+  const { oportunidadId, leadId } = exigirOportunidad(cx);
+  await new sql.Request(tx).input('l', sql.Int, leadId).input('o', sql.Int, oportunidadId)
+    .input('f', sql.Date, fechaLimite).input('p', sql.Decimal(10, 2), cx.preferencias?.presupuesto ?? null)
+    .input('d', sql.VarChar(150), cx.preferencias?.disponibilidad ?? null).query(`
+      INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, presupuesto_orientativo, disponibilidad, completo)
+      SELECT @l, @o, ISNULL(MAX(version), 0) + 1, @f, @p, @d,
+        CASE WHEN @f IS NOT NULL AND @d IS NOT NULL THEN 1 ELSE 0 END
+      FROM dbo.PERFIL_NEGOCIACION WITH (UPDLOCK, HOLDLOCK) WHERE oportunidad_id = @o`);
+}
+
 const parametrosCotizacion = {
   servicio_id: { type: 'integer', description: 'Id del servicio (de la lista de servicios cotizables).' },
   forma_pago: { type: 'string', enum: ['CONTADO', 'CUOTAS'], description: 'Forma de pago que prefiere el estudiante.' },
@@ -94,8 +105,10 @@ export const HERRAMIENTAS = {
 
   registrar_perfil_academico: h({
     def: { nombre: 'registrar_perfil_academico', descripcion: 'Guarda universidad, carrera y etapa académica del estudiante. Acepta nombres o siglas (p. ej. "UNT", "Ingeniería de Sistemas"). Si no se reconoce alguno, devuelve las opciones atendidas.',
-      esquema: objeto({ universidad: { type: 'string' }, carrera: { type: 'string' }, etapa: { type: 'string', enum: ['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER'] } }, ['universidad', 'carrera', 'etapa']) },
-    entrada: z.object({ universidad: z.string().min(2).max(150), carrera: z.string().min(2).max(120), etapa: z.enum(['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER']) }),
+      esquema: objeto({ universidad: { type: 'string' }, carrera: { type: 'string' }, etapa: { type: 'string', enum: ['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER'] },
+        sede: { type: 'string', description: 'Sede/campus indicado por el estudiante.' } }, ['universidad', 'carrera', 'etapa']) },
+    entrada: z.object({ universidad: z.string().min(2).max(150), carrera: z.string().min(2).max(120),
+      etapa: z.enum(['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER']), sede: z.string().max(100).optional() }),
     async ejecutar(cx, e) {
       const cat = await catalogos();
       const u = buscarUniversidad(e.universidad, cat), c = buscarCarrera(e.carrera, cat);
@@ -103,11 +116,14 @@ export const HERRAMIENTAS = {
         universidades_atendidas: cat.universidades.filter((x) => x.atendida).map((x) => x.nombre), carreras_atendidas: cat.carreras.filter((x) => x.atendida).map((x) => x.nombre) };
       if (!u.atendida || !c.atendida) return { ok: false, fuera_de_cobertura: true, error: `${!u.atendida ? u.nombre : c.nombre} está fuera de la cobertura actual: corresponde escalar con motivo FUERA_COBERTURA.` };
       await enTransaccion(await oltp(), async (tx) => {
-        await new sql.Request(tx).input('c', sql.Int, cx.contactoId).input('u', sql.Int, u.id).input('ca', sql.Int, c.id).input('e', sql.VarChar, e.etapa).query(`
+        const ciclo = e.etapa === 'CICLO_IX' ? 'IX' : e.etapa === 'CICLO_X' ? 'X' : null;
+        await new sql.Request(tx).input('c', sql.Int, cx.contactoId).input('u', sql.Int, u.id).input('ca', sql.Int, c.id)
+          .input('e', sql.VarChar, e.etapa).input('ci', sql.VarChar(20), ciclo).input('s', sql.VarChar(100), e.sede ?? null).query(`
           MERGE dbo.PERFIL_ACADEMICO AS d USING (SELECT @c AS contacto_id) s ON d.contacto_id = s.contacto_id
-          WHEN MATCHED THEN UPDATE SET universidad_id = @u, carrera_id = @ca, etapa_academica = @e
-          WHEN NOT MATCHED THEN INSERT (contacto_id, universidad_id, carrera_id, etapa_academica) VALUES (@c, @u, @ca, @e);`);
-        if (cx.oportunidadId) await registrarEvento(tx, cx.oportunidadId, 'PERFIL_ACADEMICO_REGISTRADO', 'AGENTE', `${c.nombre} · ${u.nombre} · ${e.etapa}`);
+          WHEN MATCHED THEN UPDATE SET universidad_id = @u, carrera_id = @ca, etapa_academica = @e, ciclo = @ci, sede = @s
+          WHEN NOT MATCHED THEN INSERT (contacto_id, universidad_id, carrera_id, etapa_academica, ciclo, sede) VALUES (@c, @u, @ca, @e, @ci, @s);`);
+        if (cx.oportunidadId) await registrarEvento(tx, cx.oportunidadId, 'PERFIL_ACADEMICO_REGISTRADO', 'AGENTE',
+          `${c.nombre} · ${u.nombre} · ${e.etapa}${ciclo ? ` · ciclo ${ciclo}` : ''}${e.sede ? ` · sede ${e.sede}` : ''}`);
       });
       return { ok: true, universidad: u.nombre, carrera: c.nombre, etapa: e.etapa };
     },
@@ -134,40 +150,54 @@ export const HERRAMIENTAS = {
   }),
 
   solicitar_diagnostico: h({
-    def: { nombre: 'solicitar_diagnostico', descripcion: 'Registra la solicitud de diagnóstico solo cuando el estudiante haya indicado un tema concreto de tesis. No uses frases de avance, empresa o respuestas genéricas como tema. Si falta el tema, pregúntalo y espera. Un especialista entrega el diagnóstico en un máximo de 48 horas; recién después se puede cotizar. Requiere perfil académico registrado.',
-      esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA'] },
-        avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' }, limitaciones: { type: 'string' } }, ['tema_tesis']) },
-    entrada: z.object({ tema_tesis: z.string().min(3).max(250), tipo_tesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA']).optional(),
-      avance_declarado: z.number().min(0).max(100).optional(), tiene_empresa_aplicacion: z.boolean().optional(), limitaciones: z.string().max(300).optional() }),
+    def: { nombre: 'solicitar_diagnostico', descripcion: 'Registra el diagnóstico solo cuando el estudiante haya indicado explícitamente un tema, tipo de tesis, avance, si tiene empresa/institución, fecha de entrega o que aún no está definida, y limitaciones (o que no tiene). Nunca infieras datos ni uses datos de universidad/carrera como tema. Guarda la fecha límite y los datos del diagnóstico en una sola transacción.',
+      esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO'] },
+        avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' },
+        fecha_limite: { type: ['string', 'null'], description: 'Fecha AAAA-MM-DD; null solo si el estudiante dijo que aún no la tiene definida.' },
+        limitaciones: { type: 'string', description: 'Limitaciones declaradas o "Ninguna indicada".' } },
+      ['tema_tesis', 'tipo_tesis', 'avance_declarado', 'tiene_empresa_aplicacion', 'fecha_limite', 'limitaciones']) },
+    entrada: z.object({ tema_tesis: z.string().min(3).max(250),
+      tipo_tesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO']),
+      avance_declarado: z.number().min(0).max(100), tiene_empresa_aplicacion: z.boolean(),
+      fecha_limite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), limitaciones: z.string().trim().min(2).max(300) }),
     async ejecutar(cx, e) {
       const { oportunidadId } = exigirOportunidad(cx);
       if (!cx.perfil) return { ok: false, error: 'Primero registra universidad, carrera y etapa.' };
       if (!extraerTemaTesis(e.tema_tesis)) return { ok: false, error: 'Falta un tema concreto de tesis. Pregúntaselo al estudiante antes de registrar el diagnóstico.' };
       if (cx.diagnostico && cx.diagnostico.estado !== 'ENTREGADO') return { ok: false, error: 'Ya hay un diagnóstico en curso.', diagnostico: cx.diagnostico };
-      const r = await enTransaccion(await oltp(), (tx) => solicitarDiagnostico(tx, { oportunidadId, temaTesis: e.tema_tesis, tipoTesis: e.tipo_tesis,
-        avanceDeclarado: e.avance_declarado, tieneEmpresaAplicacion: e.tiene_empresa_aplicacion, limitaciones: e.limitaciones }, null, 'AGENTE'));
+      const r = await enTransaccion(await oltp(), async (tx) => {
+        await guardarFechaLimiteDiagnostico(tx, cx, e.fecha_limite);
+        return solicitarDiagnostico(tx, { oportunidadId, temaTesis: e.tema_tesis, tipoTesis: e.tipo_tesis,
+          avanceDeclarado: e.avance_declarado, tieneEmpresaAplicacion: e.tiene_empresa_aplicacion, limitaciones: e.limitaciones }, null, 'AGENTE');
+      });
       return { ok: true, diagnosticoId: r.diagnostico_id, plazo: 'máximo 48 horas', siguiente: 'Un especialista revisa y entrega el diagnóstico; luego se cotiza.' };
     },
   }),
   actualizar_diagnostico_pendiente: h({
-    def: { nombre: 'actualizar_diagnostico_pendiente', descripcion: 'Completa con información nueva del estudiante un diagnóstico que ya está pendiente. Úsala cuando se registró sin tema concreto o el estudiante aporte ahora el tema. No inventes información; si aún falta el tema, pregúntalo primero.',
-      esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA'] },
-        avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' }, limitaciones: { type: 'string' } }, ['tema_tesis']) },
-    entrada: z.object({ tema_tesis: z.string().min(3).max(250), tipo_tesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA']).optional(),
-      avance_declarado: z.number().min(0).max(100).optional(), tiene_empresa_aplicacion: z.boolean().optional(), limitaciones: z.string().max(300).optional() }),
+    def: { nombre: 'actualizar_diagnostico_pendiente', descripcion: 'Completa un diagnóstico pendiente con el tema explícito, tipo de tesis, avance, empresa/institución, fecha límite (o null si el estudiante confirmó que no está definida) y limitaciones declaradas. Nunca inventes ni uses universidad/carrera como tema; pregunta por cualquier dato faltante.',
+      esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO'] },
+        avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' },
+        fecha_limite: { type: ['string', 'null'], description: 'Fecha AAAA-MM-DD o null si confirmó que no está definida.' },
+        limitaciones: { type: 'string', description: 'Limitaciones declaradas o "Ninguna indicada".' } },
+      ['tema_tesis', 'tipo_tesis', 'avance_declarado', 'tiene_empresa_aplicacion', 'fecha_limite', 'limitaciones']) },
+    entrada: z.object({ tema_tesis: z.string().min(3).max(250),
+      tipo_tesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO']),
+      avance_declarado: z.number().min(0).max(100), tiene_empresa_aplicacion: z.boolean(),
+      fecha_limite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), limitaciones: z.string().trim().min(2).max(300) }),
     async ejecutar(cx, e) {
       const { oportunidadId } = exigirOportunidad(cx);
       if (!cx.diagnostico || cx.diagnostico.estado === 'ENTREGADO') return { ok: false, error: 'No hay un diagnóstico pendiente que se pueda completar.' };
       const tema = extraerTemaTesis(e.tema_tesis);
       if (!tema) return { ok: false, error: 'Falta un tema concreto de tesis. Pregúntaselo al estudiante antes de actualizar.' };
       await enTransaccion(await oltp(), async (tx) => {
+        await guardarFechaLimiteDiagnostico(tx, cx, e.fecha_limite);
         const r = await new sql.Request(tx).input('d', sql.Int, cx.diagnostico!.id).input('o', sql.Int, oportunidadId)
-          .input('t', sql.NVarChar(250), tema).input('tt', sql.VarChar, e.tipo_tesis ?? null)
-          .input('av', sql.Decimal(5, 2), e.avance_declarado ?? null).input('em', sql.Bit, e.tiene_empresa_aplicacion ?? null)
-          .input('li', sql.NVarChar(300), e.limitaciones ?? null).query(`
+          .input('t', sql.NVarChar(250), tema).input('tt', sql.VarChar, e.tipo_tesis)
+          .input('av', sql.Decimal(5, 2), e.avance_declarado).input('em', sql.Bit, e.tiene_empresa_aplicacion)
+          .input('li', sql.NVarChar(300), e.limitaciones).query(`
             UPDATE dbo.DIAGNOSTICO
-            SET tema_tesis = @t, tipo_tesis = COALESCE(@tt, tipo_tesis), avance_declarado = COALESCE(@av, avance_declarado),
-                tiene_empresa_aplicacion = COALESCE(@em, tiene_empresa_aplicacion), limitaciones = COALESCE(@li, limitaciones)
+            SET tema_tesis = @t, tipo_tesis = @tt, avance_declarado = @av,
+                tiene_empresa_aplicacion = @em, limitaciones = @li
             OUTPUT INSERTED.diagnostico_id
             WHERE diagnostico_id = @d AND oportunidad_id = @o AND estado <> 'ENTREGADO'`);
         if (!r.recordset[0]) throw new ErrorNegocio('El diagnóstico ya no está pendiente o no pertenece a esta oportunidad.');

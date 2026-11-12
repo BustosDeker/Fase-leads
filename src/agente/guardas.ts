@@ -33,18 +33,87 @@ export function extraerTemaTesis(texto: string): string | null {
     /(?:mi|el)\s+tema(?:\s+de\s+(?:mi\s+)?tesis)?\s*(?:es|ser[ií]a|ser[aá]|:)\s*(.+)/i,
     /mi\s+tesis\s+(?:trata|es|se\s+enfoca)\s+(?:sobre|en|de)?\s*(.+)/i,
     /(?:quiero|voy\s+a)\s+investigar\s+(?:sobre\s+)?(.+)/i,
-    /(?:investigo|estudio|analizo)\s+(?:sobre\s+)?(.+)/i,
+    /(?:investigo|analizo)\s+(?:sobre\s+)?(.+)/i,
     /mi\s+investigaci[oó]n\s+(?:trata\s+de|es\s+sobre|consiste\s+en|se\s+titula|es)\s*(.+)/i,
     /t[ií]tulo(?:\s+de\s+tesis)?\s*:\s*(.+)/i,
   ];
   const marcado = marcadores.map((p) => p.exec(t)).find(Boolean);
   if (marcado) {
     const tema = marcado[1].trim().replace(/[.,;]+$/, '');
-    return tema.length >= 3 ? tema.slice(0, 250) : null;
+    return tema.length >= 3 && !/^(?:aun no|todavia no|no se|no tengo tema|por definir)[.!?]*$/i.test(normalizar(tema))
+      ? tema.slice(0, 250) : null;
   }
-  if (/\b(?:avance|empresa|instituci[oó]n|aplicar|por ciento)\b|%/i.test(t)) return null;
-  if (/^(?:hola|gracias|muchas gracias|no s[eé]|todav[ií]a no s[eé])[\s.!?]*$/i.test(t)) return null;
+  if (/\b(?:no tengo|no he definido|aun no tengo|todavia no tengo)\s+(?:un\s+)?(?:tema|titulo|tesis)\b/i.test(normalizar(t))) return null;
+  if (/\b(?:avance|empresa|instituci[oó]n|aplicar|por ciento|ciclo|universidad|carrera|sede|limitaciones|fecha de entrega|sustentaci[oó]n)\b|%|estudio en\b|estoy en\b/i.test(normalizar(t))) return null;
+  if (/^(?:hola|gracias|muchas gracias|no s[eé]|todav[ií]a no s[eé]|no tengo tema)[\s.!?]*$/i.test(t)) return null;
   return t.length >= 8 ? t.slice(0, 250) : null;
+}
+
+export type TipoTesis = 'DESCRIPTIVA' | 'CORRELACIONAL' | 'EXPERIMENTAL' | 'APLICADA' | 'NO_DEFINIDO';
+
+export function extraerTipoTesis(texto: string): TipoTesis | null {
+  const t = normalizar(texto);
+  if (/\b(no se|no lo se|aun no|todavia no|no definido|por definir)\b/.test(t)
+    && /\b(tipo|investigacion|tesis)\b/.test(t)) return 'NO_DEFINIDO';
+  if (/\b(tema|mi tesis trata|mi tema|titulo)\b/.test(t)) return null;
+  if (t.length > 60 && !/\b(tipo|investigacion)\b/.test(t)) return null;
+  if (/\b(descriptiv[oa]s?)\b/.test(t)) return 'DESCRIPTIVA';
+  if (/\b(correlacional(?:es)?)\b/.test(t)) return 'CORRELACIONAL';
+  if (/\b(experimental(?:es)?)\b/.test(t)) return 'EXPERIMENTAL';
+  if (/\b(aplicad[oa]s?)\b/.test(t)) return 'APLICADA';
+  return null;
+}
+
+export function extraerAvance(texto: string): number | null {
+  const m = /(?:avance(?:\s+de)?\s*)?(\d{1,3}(?:[.,]\d+)?)\s*(?:%|\bpor\s+ciento\b)/i.exec(texto);
+  if (!m) return null;
+  const avance = Number(m[1].replace(',', '.'));
+  return avance >= 0 && avance <= 100 ? avance : null;
+}
+
+export function extraerEstadoEmpresa(texto: string): boolean | null {
+  const t = normalizar(texto);
+  if (/\b(no tengo|no cuento con|no hay|sin)\s+(?:una?\s+)?(?:empresa|institucion|centro|lugar)\b|\bno cuento con empresa\b/.test(t))
+    return false;
+  if (/\b(tengo|cuento con|trabajo en|mi empresa es|si,\s*tengo|si,\s*cuento)\b.*\b(empresa|institucion|colegio|hospital|clinica|municipalidad)\b/.test(t))
+    return true;
+  return null;
+}
+
+export function extraerLimitaciones(texto: string): string | null {
+  const t = normalizar(texto);
+  const respuesta = /(?:mis\s+)?(?:limitaciones|dificultades|obstaculos|problemas)\s*(?:son|es|:)?\s*(.+)/i.exec(texto.trim());
+  if (respuesta) {
+    const valor = respuesta[1].trim().replace(/[.!?]+$/, '');
+    if (/^(ningun[oa]s?|no tengo|ninguna por ahora|no aplica)$/i.test(normalizar(valor))) return 'Ninguna indicada';
+    return valor.length >= 2 ? valor.slice(0, 300) : null;
+  }
+  if (/\b(?:no tengo|ningun[oa]s?|no aplica)\b/.test(t)
+    && (/\b(?:limitaciones|dificultades|obstaculos|problemas)\b/.test(t)
+      || /^(?:no tengo|ningun[oa]s?|no aplica)[.!?]*$/.test(t))) return 'Ninguna indicada';
+  return null;
+}
+
+export function extraerFechaLimite(texto: string): string | 'NO_DEFINIDA' | null {
+  const t = normalizar(texto);
+  if (/\b(no tengo fecha|sin fecha|no hay fecha|aun no se|todavia no se|no esta definida|por definir)\b/.test(t))
+    return 'NO_DEFINIDA';
+  const m = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b|\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/.exec(texto);
+  if (!m) return null;
+  const year = Number(m[1] ?? m[6]), month = Number(m[2] ?? m[5]), day = Number(m[3] ?? m[4]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+export function extraerSede(texto: string): string | null {
+  const t = normalizar(texto);
+  if (/\b(?:no se|no tengo|no recuerdo)\s+(?:cual es\s+)?(?:mi\s+)?sede\b/.test(t)) return 'No especificada';
+  const m = /(?:mi\s+)?sede\s*(?:es|de|:)?\s*([^,.;!?]+)/i.exec(texto.trim());
+  if (!m) return null;
+  const sede = m[1].trim().replace(/^(?:la|el)\s+/i, '');
+  if (/^(no se|no aplica|ninguna|sin sede)$/i.test(normalizar(sede))) return 'No especificada';
+  return sede.length >= 2 ? sede.slice(0, 100) : null;
 }
 
 /** Herramientas permitidas sin consentimiento (Ley 29733): solo pedirlo, consultar la situación o derivar. */

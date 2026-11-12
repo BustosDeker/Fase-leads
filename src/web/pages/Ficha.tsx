@@ -1,6 +1,6 @@
 // Ficha nominal (requisito IMPULSE: «se pone el nombre y salen todos sus datos»). Bloques de la tabla 5 del
 // informe; los de BUYERS son de solo lectura. Se actualiza en vivo (SSE) cuando el agente o un asesor registra algo.
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
@@ -13,6 +13,11 @@ interface Ficha { persona: Fila; oportunidades: Fila[]; perfiles: Fila[]; diagno
   eventos: Fila[]; consentimientos: Fila[] }
 
 const ETAPA: Record<string, string> = { CICLO_IX: 'Ciclo IX', CICLO_X: 'Ciclo X', EGRESADO: 'Egresado', BACHILLER: 'Bachiller' };
+const CICLO: Record<string, string> = { CICLO_IX: 'IX', CICLO_X: 'X' };
+const TIPO_TESIS: Record<string, string> = {
+  DESCRIPTIVA: 'Descriptiva', CORRELACIONAL: 'Correlacional', EXPERIMENTAL: 'Experimental',
+  APLICADA: 'Aplicada', NO_DEFINIDO: 'Aún no definido',
+};
 const horasEntre = (a: string, b?: string | null) => ((b ? new Date(b) : new Date()).getTime() - new Date(a).getTime()) / 3_600_000;
 
 /** Botón que abre un campo de texto y ejecuta la acción con lo escrito. */
@@ -178,7 +183,8 @@ export function Ficha() {
               {p.carrera ? <Datos filas={[
                 ['Universidad', p.universidad], ['Tipo', p.tipo_universidad === 'PUBLICA' ? 'Pública' : p.tipo_universidad === 'PRIVADA' ? 'Privada' : p.tipo_universidad],
                 ['Carrera', p.carrera], ['Facultad', p.facultad], ['Sede', p.sede], ['Etapa académica', ETAPA[p.etapa_academica] ?? p.etapa_academica],
-                ['Ciclo', p.ciclo], ['Avance declarado en BUYERS', p.avance != null ? `${Number(p.avance)} %` : null],
+                ...(CICLO[p.etapa_academica] ? [['Ciclo', p.ciclo ?? CICLO[p.etapa_academica]] as [string, ReactNode]] : []),
+                ['Avance declarado en BUYERS', p.avance != null ? `${Number(p.avance)} %` : null],
               ]} /> : <p className="nota">Sin perfil académico registrado en BUYERS.</p>}
             </Bloque>
             <Bloque titulo="Canal de origen" origen="BUYERS · BUYER (solo lectura)">
@@ -207,7 +213,7 @@ export function Ficha() {
                   <div className="mb-2 flex flex-wrap items-center gap-2">{situacionDiagnostico(d)}{d.requiere_derivacion && <Chip>Derivado a {d.asesor}</Chip>}</div>
                   <Datos filas={[
                     ['Fecha de solicitud', fechaHora(d.fecha_solicitud)], ['Fecha de entrega', fechaHora(d.fecha_entrega)],
-                    ['Tema', d.tema_tesis], ['Tipo de tesis', d.tipo_tesis],
+                    ['Tema', d.tema_tesis], ['Tipo de tesis', TIPO_TESIS[d.tipo_tesis] ?? d.tipo_tesis],
                     ['Avance', d.avance_declarado != null ? `${Number(d.avance_declarado)} %` : null],
                     ['Empresa de aplicación', d.tiene_empresa_aplicacion == null ? null : d.tiene_empresa_aplicacion ? 'Sí' : 'No'],
                     ['Limitaciones', d.limitaciones], ['Responsable', d.asesor],

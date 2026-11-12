@@ -16,9 +16,10 @@ export interface ContextoAgente {
   oportunidadId: number | null;
   leadId: number | null;
   estado: string | null;                       // estado de la oportunidad
-  perfil: { universidad: string; carrera: string; carreraId: number; etapa: string } | null;
+  perfil: { universidad: string; carrera: string; carreraId: number; etapa: string; ciclo: string | null; sede: string | null } | null;
   preferencias: { fechaLimite: string | null; presupuesto: number | null; disponibilidad: string | null } | null;
-  diagnostico: { id: number; estado: string; tema: string | null; avance: number | null; fechaSolicitud: Date; resumen: string | null } | null;
+  diagnostico: { id: number; estado: string; tema: string | null; tipoTesis: string | null; avance: number | null;
+    tieneEmpresa: boolean | null; limitaciones: string | null; fechaSolicitud: Date; resumen: string | null } | null;
   propuesta: { id: number; version: number; servicio: string; servicioId: number; precioFinal: number; precioBase: number; descuento: number;
     recargo: number; extras: number; vigenciaHasta: Date | null } | null;
   servicios: { servicioId: number; nombre: string; familia: string }[];
@@ -59,14 +60,15 @@ export async function cargarContexto(conversacionId: number): Promise<ContextoAg
     SELECT cv.conversacion_id, cv.canal_mensajeria, cv.chat_id, cv.estado AS estado_conv, cv.control_humano,
            co.contacto_id, co.nombres, co.apellidos, co.consentimiento_contacto, co.no_contactar,
            o.oportunidad_id, o.lead_id, o.estado,
-           u.nombre AS universidad, ca.nombre AS carrera, ca.carrera_id, pa.etapa_academica
+           u.nombre AS universidad, ca.nombre AS carrera, ca.carrera_id, pa.etapa_academica, pa.ciclo, pa.sede
     FROM dbo.CONVERSACION cv JOIN dbo.CONTACTO co ON co.contacto_id = cv.contacto_id
     LEFT JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.oportunidad_id = cv.oportunidad_id
     LEFT JOIN dbo.PERFIL_ACADEMICO pa ON pa.contacto_id = co.contacto_id
     LEFT JOIN dbo.UNIVERSIDAD u ON u.universidad_id = pa.universidad_id LEFT JOIN dbo.CARRERA ca ON ca.carrera_id = pa.carrera_id
     WHERE cv.conversacion_id = @c;
     SELECT TOP 1 fecha_limite, presupuesto_orientativo, disponibilidad FROM dbo.PERFIL_NEGOCIACION WHERE oportunidad_id = @o ORDER BY version DESC, perfil_negociacion_id DESC;
-    SELECT TOP 1 diagnostico_id, estado, tema_tesis, avance_declarado, fecha_solicitud, resumen FROM dbo.DIAGNOSTICO WHERE oportunidad_id = @o ORDER BY fecha_solicitud DESC;
+    SELECT TOP 1 diagnostico_id, estado, tema_tesis, tipo_tesis, avance_declarado, tiene_empresa_aplicacion, limitaciones, fecha_solicitud, resumen
+    FROM dbo.DIAGNOSTICO WHERE oportunidad_id = @o ORDER BY fecha_solicitud DESC;
     SELECT TOP 1 p.propuesta_id, p.version, s.nombre AS servicio, p.servicio_id, p.precio_final, p.precio_base, p.descuento, p.recargo, p.monto_extras, p.vigencia_hasta
     FROM dbo.PROPUESTA p JOIN dbo.SERVICIO s ON s.servicio_id = p.servicio_id WHERE p.oportunidad_id = @o AND p.estado IN ('PRESENTADA','ACEPTADA') ORDER BY p.version DESC;
     SELECT s.servicio_id, s.nombre, s.familia FROM dbo.SERVICIO s
@@ -88,10 +90,13 @@ export async function cargarContexto(conversacionId: number): Promise<ContextoAg
     conversacionId, canal: b.canal_mensajeria, chatId: b.chat_id, estadoConversacion: b.estado_conv, controlHumano: !!b.control_humano,
     contactoId: b.contacto_id, nombres: b.nombres, apellidos: b.apellidos, consentimiento: !!b.consentimiento_contacto, noContactar: !!b.no_contactar,
     oportunidadId: b.oportunidad_id, leadId: b.lead_id, estado: b.estado,
-    perfil: b.carrera ? { universidad: b.universidad, carrera: b.carrera, carreraId: b.carrera_id, etapa: b.etapa_academica } : null,
+    perfil: b.carrera ? { universidad: b.universidad, carrera: b.carrera, carreraId: b.carrera_id, etapa: b.etapa_academica,
+      ciclo: b.ciclo, sede: b.sede } : null,
     preferencias: pn ? { fechaLimite: pn.fecha_limite ? new Date(pn.fecha_limite).toISOString().slice(0, 10) : null,
       presupuesto: pn.presupuesto_orientativo == null ? null : Number(pn.presupuesto_orientativo), disponibilidad: pn.disponibilidad } : null,
-    diagnostico: d ? { id: d.diagnostico_id, estado: d.estado, tema: d.tema_tesis, avance: d.avance_declarado == null ? null : Number(d.avance_declarado),
+    diagnostico: d ? { id: d.diagnostico_id, estado: d.estado, tema: d.tema_tesis, tipoTesis: d.tipo_tesis,
+      avance: d.avance_declarado == null ? null : Number(d.avance_declarado),
+      tieneEmpresa: d.tiene_empresa_aplicacion == null ? null : !!d.tiene_empresa_aplicacion, limitaciones: d.limitaciones,
       fechaSolicitud: d.fecha_solicitud, resumen: d.resumen } : null,
     propuesta: p ? { id: p.propuesta_id, version: p.version, servicio: p.servicio, servicioId: p.servicio_id, precioFinal: Number(p.precio_final),
       precioBase: Number(p.precio_base), descuento: Number(p.descuento), recargo: Number(p.recargo), extras: Number(p.monto_extras), vigenciaHasta: p.vigencia_hasta } : null,
@@ -112,10 +117,11 @@ export function contextoComoTexto(c: ContextoAgente, sospecha: boolean): string 
   l.push(`Estudiante: ${c.nombres} ${c.apellidos}.`);
   l.push(c.consentimiento ? 'Consentimiento de tratamiento de datos: OTORGADO.' : 'Consentimiento de tratamiento de datos: NO OTORGADO todavía (solo puedes pedirlo; no pidas ni registres datos personales o académicos).');
   l.push(`Estado de la oportunidad: ${c.estado ?? 'sin oportunidad'}.`);
-  l.push(c.perfil ? `Perfil académico: ${c.perfil.carrera}, ${c.perfil.universidad}, etapa ${c.perfil.etapa}.`
+  l.push(c.perfil ? `Perfil académico: ${c.perfil.carrera}, ${c.perfil.universidad}, etapa ${c.perfil.etapa}` +
+    `${c.perfil.ciclo ? `, ciclo ${c.perfil.ciclo}` : ''}${c.perfil.sede ? `, sede ${c.perfil.sede}` : ''}.`
     : 'Perfil académico: falta (universidad, carrera y etapa).');
   if (c.preferencias) l.push(`Preferencias: fecha límite ${c.preferencias.fechaLimite ?? '—'}, presupuesto orientativo ${c.preferencias.presupuesto != null ? soles(c.preferencias.presupuesto) : '—'}, disponibilidad ${c.preferencias.disponibilidad ?? '—'}.`);
-  if (c.diagnostico) l.push(`Diagnóstico: ${c.diagnostico.estado} (solicitado ${fecha(c.diagnostico.fechaSolicitud)}; tema: ${c.diagnostico.tema ?? '—'}; avance declarado: ${c.diagnostico.avance ?? '—'}%).${c.diagnostico.resumen ? ' Resumen del especialista: ' + c.diagnostico.resumen.slice(0, 600) : ''}`);
+  if (c.diagnostico) l.push(`Diagnóstico: ${c.diagnostico.estado} (solicitado ${fecha(c.diagnostico.fechaSolicitud)}; tema: ${c.diagnostico.tema ?? '—'}; tipo: ${c.diagnostico.tipoTesis ?? '—'}; avance declarado: ${c.diagnostico.avance ?? '—'}%; empresa/institución: ${c.diagnostico.tieneEmpresa == null ? '—' : c.diagnostico.tieneEmpresa ? 'sí' : 'no'}; limitaciones: ${c.diagnostico.limitaciones ?? '—'}).${c.diagnostico.resumen ? ' Resumen del especialista: ' + c.diagnostico.resumen.slice(0, 600) : ''}`);
   else l.push('Diagnóstico: no solicitado.');
   if (c.propuesta) l.push(`Propuesta vigente v${c.propuesta.version}: ${c.propuesta.servicio}, precio final ${soles(c.propuesta.precioFinal)} (base ${soles(c.propuesta.precioBase)}, extras ${soles(c.propuesta.extras)}, recargos ${soles(c.propuesta.recargo)}, descuentos ${soles(c.propuesta.descuento)}), vigente hasta ${c.propuesta.vigenciaHasta ? new Date(c.propuesta.vigenciaHasta).toLocaleDateString('es-PE') : '—'}.`);
   if (c.servicios.length) l.push('Servicios cotizables para su carrera (usa el id en las herramientas): ' + c.servicios.map((s) => `${s.servicioId} = ${s.nombre}`).join('; ') + '.');

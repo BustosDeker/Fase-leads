@@ -2,11 +2,80 @@
 // Usa EXACTAMENTE las mismas herramientas (y por tanto las mismas validaciones y auditoría) que el modo con IA;
 // solo cambia cómo se interpreta el mensaje: con patrones de texto en lugar de un modelo de lenguaje.
 import { catalogos } from '../contexto.js';
-import { buscarCarrera, buscarUniversidad, detectarEtapa, extraerTemaTesis, normalizar } from '../guardas.js';
+import { buscarCarrera, buscarUniversidad, detectarEtapa, extraerAvance, extraerEstadoEmpresa, extraerFechaLimite,
+  extraerLimitaciones, extraerSede, extraerTemaTesis, extraerTipoTesis, normalizar } from '../guardas.js';
 import type { PeticionAgente, ProveedorLLM } from '../tipos.js';
 
 const soles = (n: number) => `S/ ${Number(n).toFixed(2)}`;
 const hay = (t: string, r: RegExp) => r.test(t);
+const ultimoDato = <T>(textos: string[], extraer: (texto: string) => T | null): T | null => {
+  for (const texto of [...textos].reverse()) {
+    const dato = extraer(texto);
+    if (dato !== null) return dato;
+  }
+  return null;
+};
+
+function respuestaTrasPregunta(historial: PeticionAgente['historial'], pregunta: RegExp): string | null {
+  let ultimaPregunta: string | null = null;
+  let respuesta: string | null = null;
+  for (const mensaje of historial) {
+    if (mensaje.rol === 'assistant') {
+      ultimaPregunta = mensaje.texto;
+    } else if (ultimaPregunta && pregunta.test(normalizar(ultimaPregunta))) {
+      respuesta = mensaje.texto;
+      ultimaPregunta = null;
+    } else {
+      ultimaPregunta = null;
+    }
+  }
+  return respuesta;
+}
+
+function recogerSede(historial: PeticionAgente['historial'], textos: string[]): string | null {
+  const sede = ultimoDato(textos, extraerSede);
+  if (sede) return sede;
+  const respuesta = respuestaTrasPregunta(historial, /\b(sede|campus)\b/);
+  if (!respuesta) return null;
+  if (/^(no se|no aplica|ninguna|sin sede)[.! ]*$/i.test(normalizar(respuesta.trim()))) return 'No especificada';
+  return respuesta.trim().replace(/[.!?]+$/, '').slice(0, 100) || null;
+}
+
+function recogerTipoTesis(historial: PeticionAgente['historial'], textos: string[]) {
+  const tipo = ultimoDato(textos, extraerTipoTesis);
+  if (tipo) return tipo;
+  const respuesta = respuestaTrasPregunta(historial, /\b(tipo|investigaci[oó]n)\b/);
+  if (!respuesta) return null;
+  const indicado = extraerTipoTesis(respuesta);
+  if (indicado) return indicado;
+  return /^(no se|no lo se|aun no|todavia no)[.! ]*$/i.test(normalizar(respuesta.trim())) ? 'NO_DEFINIDO' as const : null;
+}
+
+function recogerEmpresa(historial: PeticionAgente['historial'], textos: string[]): boolean | null {
+  const empresa = ultimoDato(textos, extraerEstadoEmpresa);
+  if (empresa !== null) return empresa;
+  const respuesta = respuestaTrasPregunta(historial, /\b(empresa|instituci[oó]n)\b/);
+  if (!respuesta) return null;
+  if (/^(si|claro|asi es|correcto)[.! ]*$/i.test(normalizar(respuesta.trim()))) return true;
+  if (/^(no|ninguna|no tengo|no cuento)[.! ]*$/i.test(normalizar(respuesta.trim()))) return false;
+  return null;
+}
+
+function recogerLimitaciones(historial: PeticionAgente['historial'], textos: string[]): string | null {
+  const limitaciones = ultimoDato(textos, extraerLimitaciones);
+  if (limitaciones) return limitaciones;
+  const respuesta = respuestaTrasPregunta(historial, /\b(limitaciones|dificultades|obst[aá]culos|problemas)\b/);
+  if (!respuesta) return null;
+  return extraerLimitaciones(respuesta) ?? (/^(ninguna|ninguno|no|no tengo|no aplica)[.! ]*$/i.test(normalizar(respuesta.trim()))
+    ? 'Ninguna indicada' : respuesta.trim().slice(0, 300) || null);
+}
+
+function respuestaNegativaFecha(historial: PeticionAgente['historial']): boolean {
+  const respuesta = respuestaTrasPregunta(historial, /\b(fecha|entrega|sustentaci[oó]n)\b/);
+  return !!respuesta && /^(no|no se|aun no|todavia no|no la tengo|no esta definida)[.! ]*$/i.test(normalizar(respuesta.trim()));
+}
+
+const tipoEtiqueta = (tipo: string) => tipo === 'NO_DEFINIDO' ? 'aún no definido' : tipo.toLowerCase();
 
 export function proveedorMock(): ProveedorLLM {
   return { nombre: 'mock', modelo: 'reglas-v1', responder };
@@ -52,15 +121,18 @@ async function responder(p: PeticionAgente): Promise<string> {
   // 2. Perfil académico (se juntan los últimos mensajes: el estudiante puede darlo por partes)
   if (!cx.perfil) {
     const cat = await catalogos();
-    const junto = usuario.slice(-3).map((m) => m.texto).join(' ');
+    const textos = usuario.map((m) => m.texto);
+    const junto = textos.join(' ');
     const u = buscarUniversidad(junto, cat), c = buscarCarrera(junto, cat), e = detectarEtapa(junto);
     if (u && c && e) {
-      const r = await llamar('registrar_perfil_academico', { universidad: u.nombre, carrera: c.nombre, etapa: e });
+      const sede = recogerSede(p.historial, textos);
+      if (!sede) return 'Gracias. ¿En qué sede o campus estudias? Si no aplica o no lo sabes, dime eso.';
+      const r = await llamar('registrar_perfil_academico', { universidad: u.nombre, carrera: c.nombre, etapa: e, sede });
       if (r.fuera_de_cobertura) {
         await llamar('escalar_a_humano', { motivo: 'FUERA_COBERTURA', resumen: `${c.nombre} · ${u.nombre}: fuera de la cobertura actual.` });
         return 'Por ahora esa universidad o carrera está fuera de nuestra cobertura habitual. Derivé tu caso a una persona del equipo para revisar si podemos ayudarte.';
       }
-      if (r.ok) return `Perfecto: ${r.carrera} en la ${r.universidad}. Ahora cuéntame de tu tesis: ¿cuál es el tema, cuánto avance tienes (en %) y si cuentas con una empresa o institución donde aplicarla?`;
+      if (r.ok) return `Perfecto: ${r.carrera} en la ${r.universidad}, sede ${sede}${e === 'CICLO_IX' ? ', IX ciclo' : e === 'CICLO_X' ? ', X ciclo' : ''}. Para empezar con tu diagnóstico, ¿cuál es el tema o problema concreto que quieres investigar? Si aún no lo tienes definido, dímelo.`;
     }
     if (!u && !c && !e && usuario.length <= 1)   // primer mensaje (p. ej. respuesta al saludo del agente)
       return `¡Hola, ${cx.nombres}! Para orientarte, cuéntame: ¿en qué universidad y carrera estudias, y en qué etapa estás (IX ciclo, X ciclo, egresado o bachiller)?`;
@@ -70,35 +142,49 @@ async function responder(p: PeticionAgente): Promise<string> {
 
   switch (cx.estado) {
     case 'ABIERTA': {
-      const datosRecientes = usuario.slice(-5).map((m) => m.texto).join(' ');
-      const tema = [...usuario].reverse().map((m) => extraerTemaTesis(m.texto)).find(Boolean);
-      const avance = /(\d{1,3})\s*%/.exec(datosRecientes);
-      const datosNormalizados = normalizar(datosRecientes);
-      const empresa = hay(datosNormalizados, /sin empresa|no tengo (empresa|institucion)|aun no tengo/) ? false
-        : hay(datosNormalizados, /empresa|institucion|colegio|hospital|municipalidad|clinica/) ? true : undefined;
-      if (!tema) return 'Gracias, tomo nota de tu avance y de si tienes una empresa donde aplicar la tesis. Para solicitar el diagnóstico necesito conocer el tema o problema que quieres investigar. ¿Cuál sería, aunque sea provisional?';
-      const faltan = [!avance && 'tu avance aproximado en porcentaje', empresa === undefined && 'si tienes una empresa o institución donde aplicar'].filter(Boolean);
-      if (faltan.length) return `Gracias. Ya anoté el tema de tu tesis. Para completar la solicitud, cuéntame ${faltan.join(' y ')}.`;
-      const fecha = /(\d{1,2})[/-](\d{1,2})[/-](\d{4})/.exec(ultimo);
-      if (fecha) await llamar('registrar_preferencias', { fecha_limite: `${fecha[3]}-${fecha[2].padStart(2, '0')}-${fecha[1].padStart(2, '0')}` });
-      const r = await llamar('solicitar_diagnostico', { tema_tesis: tema,
-        ...(avance ? { avance_declarado: Math.min(100, Number(avance[1])) } : {}), ...(empresa !== undefined ? { tiene_empresa_aplicacion: empresa } : {}) });
-      if (!r.ok) return 'Tuve un inconveniente al registrar tu solicitud. ¿Me repites el tema de tu tesis, por favor?';
+      const textos = usuario.map((m) => m.texto);
+      const tema = ultimoDato(textos, extraerTemaTesis);
+      if (!tema) return 'Para evitar registrar un dato incorrecto, todavía me falta el tema concreto de tu tesis. ¿Qué problema o relación quieres investigar? Si aún no lo definiste, dímelo y vemos cómo continuar.';
+      const tipo = recogerTipoTesis(p.historial, textos);
+      const avance = ultimoDato(textos, extraerAvance);
+      const empresa = recogerEmpresa(p.historial, textos);
+      const fechaDetectada = ultimoDato(textos, extraerFechaLimite);
+      const fechaLimite = typeof fechaDetectada === 'string' && fechaDetectada !== 'NO_DEFINIDA'
+        ? fechaDetectada : cx.preferencias?.fechaLimite ?? null;
+      const fechaRespondida = fechaDetectada !== null || !!cx.preferencias?.fechaLimite || respuestaNegativaFecha(p.historial);
+      const limitaciones = recogerLimitaciones(p.historial, textos);
+      if (!tipo) return '¿Qué tipo de investigación es: descriptiva, correlacional, experimental o aplicada? Si aún no lo sabes, dime “no lo sé”.';
+      if (avance === null) return '¿Qué porcentaje de avance aproximado tienes? Puedes responder, por ejemplo, 10%.';
+      if (empresa === null) return '¿Cuentas con una empresa o institución donde aplicar la tesis? Puedes responder sí o no.';
+      if (!fechaRespondida) return '¿Para qué fecha tienes prevista la entrega o sustentación? Indícame día, mes y año; si aún no la tienes, dime que no está definida.';
+      if (!limitaciones) return '¿Qué limitaciones o dificultades tienes para realizar la investigación? Si no tienes ninguna, dime “ninguna”.';
+      const r = await llamar('solicitar_diagnostico', { tema_tesis: tema, tipo_tesis: tipo, avance_declarado: avance,
+        tiene_empresa_aplicacion: empresa, fecha_limite: fechaLimite, limitaciones });
+      if (!r.ok) return `No pude registrar la solicitud porque falta validar un dato: ${r.error ?? 'revisa la información'}.`;
       return 'Listo, registré tu solicitud de diagnóstico. Un especialista revisará tu caso y te lo entregará en un máximo de 48 horas; con eso te comparto una propuesta a tu medida.';
     }
     case 'EN_DIAGNOSTICO': {
-      if (cx.diagnostico?.estado !== 'ENTREGADO' && !extraerTemaTesis(cx.diagnostico?.tema ?? '')) {
-        const tema = extraerTemaTesis(ultimo);
-        if (!tema) return 'Tu solicitud está pendiente, pero me falta el tema concreto de tu tesis para completar la información del especialista. ¿Qué tema o problema quieres investigar?';
-        const datosNormalizados = normalizar(ultimo);
-        const avance = /(\d{1,3})\s*%/.exec(ultimo);
-        const empresa = hay(datosNormalizados, /sin empresa|no tengo (empresa|institucion)|aun no tengo/) ? false
-          : hay(datosNormalizados, /empresa|institucion|colegio|hospital|municipalidad|clinica/) ? true : undefined;
-        const r = await llamar('actualizar_diagnostico_pendiente', { tema_tesis: tema,
-          ...(avance ? { avance_declarado: Math.min(100, Number(avance[1])) } : {}),
-          ...(empresa !== undefined ? { tiene_empresa_aplicacion: empresa } : {}) });
-        if (!r.ok) return 'Gracias. Para completar tu solicitud necesito conocer el tema o problema que quieres investigar. ¿Cuál sería, aunque sea provisional?';
-        return 'Gracias, ya completé la información de tu solicitud con el tema que me indicaste. El especialista la revisará y te compartiré el diagnóstico en un máximo de 48 horas.';
+      if (cx.diagnostico?.estado !== 'ENTREGADO') {
+        const textos = usuario.map((m) => m.texto);
+        const tema = ultimoDato(textos, extraerTemaTesis) ?? extraerTemaTesis(cx.diagnostico?.tema ?? '');
+        if (!tema) return 'Tu solicitud sigue pendiente y detecté que todavía falta un tema concreto de tesis. ¿Qué problema o relación quieres investigar? No quiero registrar como tema tus datos de universidad o ciclo.';
+        const tipo = recogerTipoTesis(p.historial, textos) ?? (cx.diagnostico?.tipoTesis as ReturnType<typeof extraerTipoTesis>) ?? null;
+        const avance = ultimoDato(textos, extraerAvance) ?? cx.diagnostico?.avance ?? null;
+        const empresa = recogerEmpresa(p.historial, textos) ?? cx.diagnostico?.tieneEmpresa ?? null;
+        const fechaDetectada = ultimoDato(textos, extraerFechaLimite);
+        const fechaLimite = typeof fechaDetectada === 'string' && fechaDetectada !== 'NO_DEFINIDA'
+          ? fechaDetectada : cx.preferencias?.fechaLimite ?? null;
+        const fechaRespondida = fechaDetectada !== null || !!cx.preferencias?.fechaLimite || respuestaNegativaFecha(p.historial);
+        const limitaciones = recogerLimitaciones(p.historial, textos) ?? cx.diagnostico?.limitaciones ?? null;
+        if (!tipo) return 'Para completar la ficha del especialista, ¿qué tipo de investigación es: descriptiva, correlacional, experimental o aplicada? Si no lo sabes, dime “no lo sé”.';
+        if (avance === null) return 'Para completar la ficha del especialista, ¿qué porcentaje de avance aproximado tienes?';
+        if (empresa === null) return '¿Cuentas con una empresa o institución donde aplicar tu investigación? Puedes responder sí o no.';
+        if (!fechaRespondida) return '¿Para qué fecha tienes prevista la entrega o sustentación? Indícame día, mes y año; si no está definida, dime eso.';
+        if (!limitaciones) return '¿Qué limitaciones o dificultades tienes? Si no tienes ninguna, dime “ninguna”.';
+        const r = await llamar('actualizar_diagnostico_pendiente', { tema_tesis: tema, tipo_tesis: tipo,
+          avance_declarado: avance, tiene_empresa_aplicacion: empresa, fecha_limite: fechaLimite, limitaciones });
+        if (!r.ok) return `No pude completar la información del diagnóstico: ${r.error ?? 'revisa los datos'}.`;
+        return 'Gracias, completé la información que me diste para el especialista. Tu diagnóstico sigue pendiente de revisión y te lo compartiré en un máximo de 48 horas.';
       }
       return cx.diagnostico?.estado === 'ENTREGADO'
         ? 'Tu diagnóstico ya está listo y estamos verificando los requisitos para preparar tu propuesta. Te escribo apenas esté.'
