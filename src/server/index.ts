@@ -2,7 +2,7 @@
 // las rutas de negocio, SSE, webhooks y el frontend se agregan en las etapas siguientes.
 import Fastify from 'fastify';
 import { config, BD_OLTP, BD_MART } from '../config.js';
-import { oltp, mart, cerrarPools } from './db.js';
+import { oltp, mart, cerrarPools } from '../db.js';
 import { explicarErrorSql } from '../diagnostico-sql.js';
 
 const app = Fastify({ logger: { level: 'info' } });

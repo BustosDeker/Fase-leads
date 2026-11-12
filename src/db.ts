@@ -1,6 +1,6 @@
 // Pools de conexión de la app (usuario de mínimos privilegios). Uno por base.
 import sql from 'mssql';
-import { configMssql, BD_OLTP, BD_MART } from '../config.js';
+import { configMssql, BD_OLTP, BD_MART } from './config.js';
 
 let poolOltp: sql.ConnectionPool | null = null;
 let poolMart: sql.ConnectionPool | null = null;

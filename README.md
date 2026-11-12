@@ -54,7 +54,7 @@ Instala `mssql-server` según la guía oficial de Microsoft y ejecuta `sudo /opt
 | Comando | Qué hace |
 |---|---|
 | `npm run setup` | Verifica Node, crea `.env`, instala dependencias y OpenWA, compila el frontend y ejecuta `db:init`. |
-| `npm start` | Levanta la app (puerto `PORT`, 3000 por defecto) y OpenWA (2785), y abre el navegador. |
+| `npm start` | Levanta la app (puerto `PORT`, 3100 por defecto) y OpenWA (2785), y abre el navegador. |
 | `npm run db:init` | Crea `INBESTIGA_TESIS` e `INBESTIGA_MART` si no existen, aplica la ampliación de la app, carga los catálogos y crea el usuario `inbestiga_app`. Es idempotente. |
 | `npm run db:reset` | **Borra y recrea** ambas bases. |
 

@@ -14,7 +14,7 @@ const bool = (v, def = false) => (v === undefined || v === '' ? def : /^(1|true|
 const int = (v, def) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? def : Number(v));
 
 export const config = {
-  puerto: int(process.env.PORT, 3000),
+  puerto: int(process.env.PORT, 3100),
   db: {
     servidor: process.env.DB_SERVER || 'localhost',
     puerto: int(process.env.DB_PORT, 1433),

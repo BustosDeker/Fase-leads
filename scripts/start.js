@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OPENWA_DIR = path.join(RAIZ, 'vendor', 'OpenWA');
 const esWindows = process.platform === 'win32';
-const PUERTO = process.env.PORT || 3000;
+const PUERTO = process.env.PORT || 3100;
 const procesos = [];
 
 function lanzar(nombre, color, cmd, args, cwd) {
