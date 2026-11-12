@@ -23,8 +23,18 @@
     },
     {
       "parameters": {
+        "jsCode": "const estado = $getWorkflowStaticData('global');\nconst entrada = $input.first().json || {};\nreturn [{ json: { appUrl: entrada.appUrl, desdeId: Number(estado.ultimoEscalamientoId || 0) } }];"
+      },
+      "id": "derivacion-preparar-url",
+      "name": "Preparar consulta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
         "method": "GET",
-        "url": "={{$node[\"Config\"].json.appUrl + '/api/agente/derivaciones/pendientes?desde_id=' + ($getWorkflowStaticData('global').ultimoEscalamientoId || 0)}}",
+        "url": "{{$json.appUrl + '/api/agente/derivaciones/pendientes?desde_id=' + $json.desdeId}}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpHeaderAuth",
         "options": { "timeout": 30000 }
@@ -34,7 +44,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "credentials": { "httpHeaderAuth": { "name": "INBESTIGA agente" } },
-      "position": [520, 300]
+      "position": [740, 300]
     },
     {
       "parameters": {
@@ -44,7 +54,7 @@
       "name": "Guardar último escalamiento",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [760, 300]
+      "position": [980, 300]
     },
     {
       "parameters": {
@@ -58,7 +68,7 @@
       "name": "¿Hay derivaciones nuevas?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1020, 300]
+      "position": [1240, 300]
     },
     {
       "parameters": { "fromEmail": "", "toEmail": "", "subject": "INBESTIGA: nueva derivación pendiente", "emailType": "text", "message": "={{JSON.stringify($json.derivaciones)}}" },
@@ -67,12 +77,13 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "disabled": true,
-      "position": [1280, 220]
+      "position": [1500, 220]
     }
   ],
   "connections": {
     "Cada 5 minutos": { "main": [[{ "node": "Config", "type": "main", "index": 0 }]] },
-    "Config": { "main": [[{ "node": "Consultar derivaciones", "type": "main", "index": 0 }]] },
+    "Config": { "main": [[{ "node": "Preparar consulta", "type": "main", "index": 0 }]] },
+    "Preparar consulta": { "main": [[{ "node": "Consultar derivaciones", "type": "main", "index": 0 }]] },
     "Consultar derivaciones": { "main": [[{ "node": "Guardar último escalamiento", "type": "main", "index": 0 }]] },
     "Guardar último escalamiento": { "main": [[{ "node": "¿Hay derivaciones nuevas?", "type": "main", "index": 0 }]] },
     "¿Hay derivaciones nuevas?": { "main": [[{ "node": "Aviso a persona (DESACTIVADO)", "type": "main", "index": 0 }], []] }

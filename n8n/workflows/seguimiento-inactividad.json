@@ -23,8 +23,18 @@
     },
     {
       "parameters": {
+        "jsCode": "const entrada = $input.first().json || {};\nreturn [{ json: { appUrl: entrada.appUrl } }];"
+      },
+      "id": "seguimiento-preparar-url",
+      "name": "Preparar URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
         "method": "POST",
-        "url": "={{$node[\"Config\"].json.appUrl + '/api/agente/seguimiento/ejecutar'}}",
+        "url": "{{$json.appUrl + '/api/agente/seguimiento/ejecutar'}}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "httpHeaderAuth",
         "sendBody": true,
@@ -37,7 +47,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "credentials": { "httpHeaderAuth": { "name": "INBESTIGA agente" } },
-      "position": [520, 300]
+      "position": [740, 300]
     },
     {
       "parameters": {
@@ -54,7 +64,7 @@
       "name": "¿Hay envíos o derivaciones?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [780, 300]
+      "position": [1000, 300]
     },
     {
       "parameters": { "fromEmail": "", "toEmail": "", "subject": "INBESTIGA: seguimiento requiere revisión", "emailType": "text", "message": "={{'Resultado de seguimiento: ' + JSON.stringify($json)}}" },
@@ -63,12 +73,13 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "disabled": true,
-      "position": [1040, 220]
+      "position": [1260, 220]
     }
   ],
   "connections": {
     "Cada 15 minutos": { "main": [[{ "node": "Config", "type": "main", "index": 0 }]] },
-    "Config": { "main": [[{ "node": "Ejecutar seguimiento", "type": "main", "index": 0 }]] },
+    "Config": { "main": [[{ "node": "Preparar URL", "type": "main", "index": 0 }]] },
+    "Preparar URL": { "main": [[{ "node": "Ejecutar seguimiento", "type": "main", "index": 0 }]] },
     "Ejecutar seguimiento": { "main": [[{ "node": "¿Hay envíos o derivaciones?", "type": "main", "index": 0 }]] },
     "¿Hay envíos o derivaciones?": { "main": [[{ "node": "Aviso (DESACTIVADO)", "type": "main", "index": 0 }], []] }
   },
