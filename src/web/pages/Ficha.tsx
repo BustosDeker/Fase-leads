@@ -381,7 +381,9 @@ export function Ficha() {
               <Bloque titulo="Agenda y seguimiento" origen="LEADS · CITA_VIRTUAL, SEGUIMIENTO_LEAD">
                 {citas.length === 0 && segs.length === 0 && <p className="nota">Sin citas ni seguimientos. La cita es opcional: el estudiante puede seguir por WhatsApp.</p>}
                 <ul className="space-y-2 text-sm">
-                  {citas.map((c) => <li key={c.cita_id} className="flex flex-wrap items-center gap-2"><Chip>{c.estado}</Chip>{fechaHora(c.inicio)} · {c.medio} · {c.asesor}</li>)}
+                  {citas.map((c) => <li key={c.cita_id} className="flex flex-wrap items-center gap-2"><Chip>{c.estado}</Chip>{fechaHora(c.inicio)} · {c.medio} · {c.asesor}
+                    {c.enlace ? <a className="font-medium underline underline-offset-2 hover:no-underline" href={c.enlace} target="_blank" rel="noreferrer">Enlace de reunión ↗</a>
+                      : <span className="nota">El asesor enviará el enlace antes de la reunión.</span>}</li>)}
                   {segs.map((s) => <li key={s.seguimiento_lead_id} className="text-tinta-2">{fechaHora(s.fecha_accion)} · {s.resultado}<span className="nota block">Siguiente: {s.siguiente_accion}</span></li>)}
                 </ul>
                 {op && <Link className="boton-claro mt-3" to={`/leads/agenda?op=${op.oportunidad_id}`}>Agendar cita</Link>}

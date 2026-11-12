@@ -7,7 +7,7 @@ import { aInputLocal } from '../formato';
 import { Aviso, Bloque, Chip, Encabezado } from '../components/ui';
 
 interface Cita { cita_id: number; oportunidad_id: number; lead_id: number; asesor_id: number; asesor: string; inicio: string; fin: string;
-  medio: string; estado: string; estudiante: string; solapada: number }
+  medio: string; enlace?: string | null; estado: string; estudiante: string; solapada: number }
 interface Agenda { citas: Cita[]; asesores: { asesor_id: number; nombre: string; rol: string }[]; rango: { primera: string | null; ultima: string | null } }
 
 const SIGUIENTE: Record<string, string[]> = { SOLICITADA: ['CONFIRMADA', 'CANCELADA'], CONFIRMADA: ['REALIZADA', 'NO_ASISTIO', 'CANCELADA'] };
@@ -90,6 +90,9 @@ export function Agenda() {
                       <div className="font-semibold">{hora(c.inicio)}–{hora(c.fin)}</div>
                       <Link className="underline-offset-2 hover:underline" to={`/leads/ficha?lead=${c.lead_id}&op=${c.oportunidad_id}`}>{c.estudiante}</Link>
                       <div className="text-tinta-3">{c.asesor} · {c.medio}</div>
+                      {c.enlace ? <a className="mt-1 block break-all font-medium text-tinta underline underline-offset-2 hover:no-underline"
+                        href={c.enlace} target="_blank" rel="noreferrer">Enlace de reunión ↗</a>
+                        : <div className="mt-1 text-tinta-3">El asesor enviará el enlace antes de la reunión.</div>}
                       <div className="mt-1 flex flex-wrap gap-1">
                         <Chip tono={c.estado === 'REALIZADA' ? 'bueno' : c.estado === 'NO_ASISTIO' ? 'malo' : c.estado === 'CANCELADA' ? 'apagado' : 'neutro'}>{NOMBRE[c.estado]}</Chip>
                         {c.solapada ? <Chip tono="malo">■ Solapada</Chip> : null}
