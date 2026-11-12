@@ -86,9 +86,9 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 |---|---|
 | E1 · Base: repo, setup, conexión, `db:init` | ✅ (ver «Pendiente / Limitaciones») |
 | E2 · Seed + ETL + `etl:verify` | ✅ |
-| E3 · Tablero BI | ✅ (falta «Explicar con IA», va con el agente en E5) |
+| E3 · Tablero BI (incluye «Explicar este tablero») | ✅ |
 | E4 · Ficha nominal, pipeline, diagnósticos, cotizador, objeciones, agenda, consentimiento, auditoría | ✅ |
-| E5 · Agente Negociador | pendiente |
+| E5 · Agente Negociador + simulador de WhatsApp + pantalla Conversaciones | ✅ (modo mock verificado; ver «Pendiente / Limitaciones») |
 | E6 · WhatsApp real con OpenWA | pendiente |
 | E7 · Stubs de otras fases, simulador de PAYERS, Plataforma | pendiente |
 | E8 · Pulido de demo | pendiente |
@@ -105,6 +105,8 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 ## Pendiente / Limitaciones
 
 - Verificado en Windows 11 con SQL Server 2022 Developer y Node 22.16. **Linux y macOS no se han probado todavía**: los scripts son Node puro, pero falta ejecutarlos allí.
+- El agente con IA real (Claude, OpenAI, Gemini) **no se ha probado con una clave en este entorno**: solo el modo `mock` está verificado de punta a punta. Los adaptadores de OpenAI y Gemini usan sus API HTTP documentadas, pero pueden necesitar ajustes.
+- En modo `mock` el agente entiende frases típicas (consentimiento, universidad/carrera/etapa, tema y avance, contado/cuotas, descuento con %, cita, aceptación, objeciones del catálogo); fuera de eso responde de forma genérica.
 - Aún no hay inicio de sesión con roles (admin, asesor, viewer): pendiente para la E8.
 - El tablero solo ve lo que cargó el último ETL. Las oportunidades nuevas de la demo aparecen al pulsar «Ejecutar ETL».
 - OpenWA usa WhatsApp Web, una **API no oficial**: el número puede quedar restringido. Usa un número dedicado para la demo. El plan B es el Simulador de WhatsApp de la app.

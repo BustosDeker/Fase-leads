@@ -11,6 +11,8 @@ import { explicarErrorSql } from '../diagnostico-sql.js';
 import { rutasEventos } from './eventos.js';
 import { rutasTablero } from './rutas-tablero.js';
 import { rutasLeads } from './rutas-leads.js';
+import { rutasAgente } from './rutas-agente.js';
+import { estadoAgente } from '../agente/motor.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
 
 const app = Fastify({ logger: { level: 'info' } });
@@ -41,12 +43,13 @@ app.get('/api/salud', async () => {
     sqlServer.error = explicarErrorSql(err);
   }
   // WhatsApp/OpenWA se integra en la etapa E6.
-  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, whatsapp: { estado: 'NO_CONFIGURADO' } };
+  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: estadoAgente(), whatsapp: { estado: 'NO_CONFIGURADO' } };
 });
 
 rutasEventos(app);
 rutasTablero(app);
 rutasLeads(app);
+rutasAgente(app);
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');

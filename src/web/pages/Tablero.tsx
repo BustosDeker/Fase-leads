@@ -7,6 +7,7 @@ import { INDICADORES, type CodigoKpi } from '../../shared/indicadores';
 import { api, type Kpis, type OpcionesFiltros } from '../api';
 import { AccionesSugeridas } from '../components/AccionesSugeridas';
 import { EmbudoChart } from '../components/EmbudoChart';
+import { ExplicarTablero } from '../components/ExplicarTablero';
 import { BotonEtl, FranjaEtl, useEstadoEtl } from '../components/EtlRunner';
 import { KpiCard } from '../components/KpiCard';
 import { ReporteDimension } from '../components/ReporteDimension';
@@ -93,6 +94,8 @@ export function Tablero() {
             : <div key={k.codigo} className="tarjeta h-56 animate-pulse" aria-hidden />;
         })}
       </section>
+
+      <ExplicarTablero filtros={filtros} />
 
       {/* Embudo + tendencia */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

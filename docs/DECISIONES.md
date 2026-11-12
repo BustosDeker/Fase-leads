@@ -139,3 +139,15 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - **Agenda:** el servidor rechaza un solapamiento por asesor (409) antes de insertar, con bloqueo de rango. Las citas canceladas no cuentan. Los cambios de estado siguen el ciclo SOLICITADA → CONFIRMADA → REALIZADA / NO_ASISTIO / CANCELADA.
 - **Menú:** además de lo que pedía la guía visual se agregaron «Diagnósticos», «Objeciones y escalamientos» y «Consentimiento», que son pantallas obligatorias del prompt (4, 6 y 8).
 - **Tiempo real:** una sola conexión SSE por pestaña. Al principio cada componente abría la suya y, con varias pestañas o navegaciones, se agotaba el límite de ~6 conexiones del navegador y las páginas quedaban esperando. Cuando hay un evento «oltp», se refrescan las pantallas operativas; el tablero no, porque lee del data mart y solo cambia con el ETL.
+
+## 14. Agente Negociador (E5)
+
+- **Un solo motor, varios proveedores.** `src/agente/motor.ts` decide si el agente responde (control humano, consentimiento revocado, duplicados), arma el contexto desde el OLTP y llama al proveedor. Claude, OpenAI, Gemini y `mock` reciben las mismas herramientas; `mock` interpreta con reglas pero ejecuta las herramientas igual, así que la auditoría y las validaciones son idénticas.
+- **Las herramientas no reciben ids.** Siempre actúan sobre la oportunidad de la conversación en curso: el modelo no puede tocar datos de otra persona aunque se lo pidan.
+- **El precio nunca lo escribe el modelo.** La salida se revisa: cualquier monto «S/» que no haya salido de una herramienta en ese turno (o de la propuesta vigente) reemplaza la respuesta por un mensaje seguro y queda anotado en el turno.
+- **Consentimiento primero (Ley 29733).** Sin consentimiento solo se permiten pedirlo, consultar la situación o derivar; el servidor rechaza las demás herramientas.
+- **Diagnóstico y aptitud siguen siendo humanos.** El agente solicita el diagnóstico; un especialista lo entrega y califica la aptitud en «Diagnósticos». Así la medición de plazos (48 h y 2 h) es real.
+- **Derivar detiene al agente.** Un escalamiento pasa la conversación a `DERIVADA` con `control_humano = 1`; el asesor la devuelve desde Conversaciones.
+- **Alta de estudiantes desde el chat.** Un número nuevo crea CONTACTO → BUYER → LEAD → OPORTUNIDAD (`ABIERTA`). En el simulador se marcan `es_demo = 1` y `seed:reset` los borra.
+- **Claude:** SDK oficial, `claude-opus-5-5` por defecto, esfuerzo `medium` configurable (`LLM_EFFORT`), bloque de reglas cacheado y respaldo de servidor ante una negativa por política (`fallbacks: "default"`).
+- **zod 3.24 → 3.25** porque el SDK de Anthropic lo pide como dependencia opcional (misma versión mayor, sin cambios en el código).

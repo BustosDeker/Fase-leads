@@ -24,6 +24,7 @@
     "dev": "node scripts/dev.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.8.0",
     "@fastify/static": "8.0.3",
     "@fontsource/inter": "5.1.0",
     "@tanstack/react-query": "5.62.7",
@@ -35,7 +36,7 @@
     "react-router-dom": "6.28.0",
     "recharts": "2.15.0",
     "tsx": "4.19.2",
-    "zod": "3.24.1"
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/mssql": "9.1.5",
