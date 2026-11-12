@@ -7,10 +7,10 @@ Registro de las decisiones tomadas al implementar la Fase 2 · LEADS. Cada una i
 | Archivo del equipo | Ubicación en el repo | Uso |
 |---|---|---|
 | `01_OLTP_ER.sql` (DDL v2, 59 tablas + Anexo A) | `db/oltp/01_OLTP_ER.sql` | Se ejecuta **sin cambios**. |
-| `02_OLTP_Poblamiento_LEADS.sql` (simulación del informe) | `db/oltp/simulacion_informe/` | Escenario opcional que reproduce la Tabla 24 (E2: `npm run seed -- --informe`). |
+| `02_OLTP_Poblamiento_LEADS.sql` (datos de prueba del informe) | `db/oltp/simulacion_informe/` | Conjunto de prueba opcional (E2: `npm run seed -- --informe`). |
 | `03_DataMart_DDL.sql` (Anexo B) | `db/dm/03_DataMart_DDL.sql` | Se ejecuta **sin cambios**. |
 | `04_ETL.sql` (Anexo C) | `db/etl/04_ETL.sql` | Fuente del ETL de la app (E2). |
-| `05_Conciliacion_Reportes.sql` (Anexo D) | `db/reports/05_Conciliacion_Reportes.sql` | Consultas R1–R4 y conciliación. |
+| `05_Conciliacion_Reportes.sql` (Anexo D) | `db/reports/05_Conciliacion_Reportes.sql` | Consultas R1–R4. Sus comentarios de «valores esperados» se refieren a los datos de prueba del informe y no se usan para validar. |
 | Informe `LEADS_FASE2_FINAL_revisado_v2.docx` | `docs/informe/` | Requisitos (tablas 1–33). |
 
 ## 2. Diferencias entre el prompt y los scripts (se respetan los scripts)
@@ -70,21 +70,25 @@ Solo se agrega `ETL_EJECUCION` (bitácora: hora, duración, parámetros, filas p
 - El backend corre con `tsx` (TypeScript sin paso de compilación) para no agregar un build al servidor. El frontend sí se compila con Vite en `setup`.
 - Los scripts de `scripts/` son JavaScript ESM. `setup.js` no tiene dependencias porque corre antes de `npm install`.
 
-## 8. Verificación de los scripts del informe (ejecutados en SQL Server 2022)
+## 8. Criterio de validación: el data mart debe coincidir con el OLTP
 
-El informe (Tabla 24, nota) dice que los scripts de los anexos «no se han ejecutado». Se ejecutaron en este orden sobre una base limpia: `01_OLTP_ER.sql` → `simulacion_informe/02_OLTP_Poblamiento_LEADS.sql` → `03_DataMart_DDL.sql` → `04_ETL.sql` → `05_Conciliacion_Reportes.sql`. Los resultados fueron:
+Las cifras del informe (Tabla 24 y tablas 25–33) son **datos de prueba**. La fuente de verdad es la base implementada. Por eso la validación compara cada hecho del data mart con lo que se calcula directamente sobre el OLTP del que se puebla. **Nunca se compara contra valores fijos del informe.**
 
-| Control | Esperado (informe) | Obtenido |
+`db/reports/06_verificacion_oltp_mart.sql` (lo usarán `npm run etl:verify` y las pruebas):
+- Recalcula M1–M10 desde `INBESTIGA_TESIS`, una fila por unidad de conteo, **sin pasar por las dimensiones ni reutilizar las consultas del ETL**.
+- Lo compara con `SUM()` de cada hecho en `INBESTIGA_MART`. Así detecta unidades perdidas en los `INNER JOIN` con dimensiones, duplicados por versiones o respuestas y errores de madurez o ventana.
+- Comprueba que cada numerador sea subconjunto de su denominador (M2 ≤ M1, M4 ≤ M3, M6 ≤ M5, M8 ≤ M7, M10 ≤ M9).
+
+**Prueba realizada (SQL Server 2022, `sqlcmd`):** se cargó como dato de prueba `simulacion_informe/02_OLTP_Poblamiento_LEADS.sql`, se ejecutó el ETL del Anexo C sin cambios y se verificó con dos fechas de corte distintas:
+
+| Medida | `@Corte` 30/04/2026 · OLTP = mart | `@Corte` 15/02/2026 · OLTP = mart |
 |---|---|---|
-| Poblamiento: oportunidades, diagnósticos, propuestas, objeciones, transferencias, conversiones | 200, 180, 141, 50, 54, 36 | 200, 180, 141, 50, 54, 36 ✔ |
-| Tabla 24 · Hecho_Diagnostico M1·M2 | 180 · 144 | 180 · 144 ✔ |
-| Tabla 24 · Hecho_Oportunidad M3…M8 | 150·120·135·54·200·36 | 150·120·135·54·200·36 ✔ |
-| Tabla 24 · Hecho_Recuperacion_Objecion M9·M10 | 50 · 20 | 50 · 20 ✔ |
-| Tablas 25–27 (K1 por GrupoEtapa, Equipo, TipoUniversidad) | 77,1/81,5/82,2 · 90,0/64,3 · 82,0/77,5 | idénticos ✔ |
-| Tablas 29–30 (K2, K3, K5 por TipoCanal y Familia) | 83,3/43,6/22,5 · 77,8/37,5/15,0 · 87,5/35,0 · 90,9/47,3 · 0,0 | idénticos ✔ |
-| Tablas 31–32 (K4 por Grupo y Familia) | 28,6/41,7/44,4/40,9 · 34,4/50,0 | idénticos ✔ |
-| R4.1 · Citas solapadas | 0 | **1** ✖ |
-| R4.2–R4.4 | 0, 0, 0 | 0, 0, 0 ✔ |
-| R4.5 · Transferencias sin confirmación | 18 | 18 ✔ |
+| M1 · M2 | 180 · 144 ✔ | 180 · 144 ✔ |
+| M3 · M4 | 150 · 120 ✔ | 150 · 120 ✔ |
+| M5 · M6 | 135 · 54 ✔ | 53 · 21 ✔ |
+| M7 · M8 | 200 · 36 ✔ | 0 · 0 ✔ |
+| M9 · M10 | 50 · 20 ✔ | 18 · 8 ✔ |
 
-**Inconsistencia en el poblamiento simulado:** las citas 6 (oportunidad 24, REALIZADA) y 11 (oportunidad 34, NO_ASISTIO) del asesor 2 tienen el mismo horario (22/01/2026, 10:00–10:45). R4.1 excluye solo las canceladas, así que las reporta como solapadas. Hay dos formas de corregirlo: mover una de las dos citas en `02_OLTP_Poblamiento_LEADS.sql` (recomendado) o cambiar el texto del informe a «1 solapamiento detectado». No se modificó el script del equipo; la decisión queda para los autores. En la app, la tool `agendar_cita` impide crear solapamientos nuevos.
+Las 10 medidas coinciden en ambos cortes y se cumplen las 5 reglas de subconjunto. El ETL del Anexo C carga el data mart de forma consistente con el OLTP. Después de la prueba se restauraron las bases al estado limpio que espera `db:init`.
+
+**Auditoría R4.1 (dato de prueba, no es un defecto):** con ese poblamiento, la consulta de citas solapadas devuelve 1 caso (asesor 2, citas 6 y 11, 22/01/2026 10:00–10:45, en estado REALIZADA y NO_ASISTIO). La auditoría funciona como se espera: detecta lo que hay en los datos. En la app, la tool `agendar_cita` impide crear solapamientos nuevos.
