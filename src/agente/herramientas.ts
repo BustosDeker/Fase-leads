@@ -32,10 +32,10 @@ function exigirOportunidad(cx: ContextoAgente) {
 async function guardarFechaLimiteDiagnostico(tx: sql.Transaction, cx: ContextoAgente, fechaLimite: string | null) {
   const { oportunidadId, leadId } = exigirOportunidad(cx);
   await new sql.Request(tx).input('l', sql.Int, leadId).input('o', sql.Int, oportunidadId)
-    .input('f', sql.Date, fechaLimite).input('p', sql.Decimal(10, 2), cx.preferencias?.presupuesto ?? null)
+    .input('f', sql.VarChar(10), fechaLimite).input('p', sql.Decimal(10, 2), cx.preferencias?.presupuesto ?? null)
     .input('d', sql.VarChar(150), cx.preferencias?.disponibilidad ?? null).query(`
       INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, presupuesto_orientativo, disponibilidad, nivel_confianza, necesidad_acompanamiento, completo)
-      SELECT @l, @o, ISNULL(MAX(version), 0) + 1, @f, @p, @d,
+      SELECT @l, @o, ISNULL(MAX(version), 0) + 1, TRY_CONVERT(date, @f, 23), @p, @d,
         (SELECT TOP 1 x.nivel_confianza FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC),
         (SELECT TOP 1 x.necesidad_acompanamiento FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC),
         CASE WHEN @f IS NOT NULL AND @d IS NOT NULL THEN 1 ELSE 0 END
@@ -280,12 +280,12 @@ export const HERRAMIENTAS = {
       const { oportunidadId, leadId } = exigirOportunidad(cx);
       await enTransaccion(await oltp(), async (tx) => {
         await new sql.Request(tx).input('l', sql.Int, leadId).input('o', sql.Int, oportunidadId)
-          .input('f', sql.Date, e.fecha_limite ?? cx.preferencias?.fechaLimite ?? null)
+          .input('f', sql.VarChar(10), e.fecha_limite ?? cx.preferencias?.fechaLimite ?? null)
           .input('p', sql.Decimal(10, 2), e.presupuesto_orientativo ?? cx.preferencias?.presupuesto ?? null)
           .input('d', sql.VarChar, (e.disponibilidad ?? cx.preferencias?.disponibilidad ?? null)?.slice(0, 150) ?? null)
           .input('n', sql.TinyInt, e.nivel_confianza ?? null).input('na', sql.VarChar(300), e.necesidad_acompanamiento ?? null).query(`
           INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, presupuesto_orientativo, disponibilidad, nivel_confianza, necesidad_acompanamiento, completo)
-          SELECT @l, @o, ISNULL(MAX(version), 0) + 1, @f, @p, @d,
+          SELECT @l, @o, ISNULL(MAX(version), 0) + 1, TRY_CONVERT(date, @f, 23), @p, @d,
             ISNULL(@n, (SELECT TOP 1 x.nivel_confianza FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC)),
             ISNULL(@na, (SELECT TOP 1 x.necesidad_acompanamiento FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC)),
             CASE WHEN @f IS NOT NULL AND @d IS NOT NULL THEN 1 ELSE 0 END
@@ -307,7 +307,7 @@ export const HERRAMIENTAS = {
       tipo_tesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO']),
       avance_declarado: z.number().min(0).max(100), tiene_empresa_aplicacion: z.boolean(),
       fecha_limite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), limitaciones: z.string().trim().min(2).max(300) }),
-    async ejecutar(cx, e) {
+    async ejecutar(cx, e): Promise<unknown> {
       const { oportunidadId } = exigirOportunidad(cx);
       if (!cx.perfil) return { ok: false, error: 'Primero registra universidad, carrera y etapa.' };
       if (!extraerTemaTesis(e.tema_tesis)) return { ok: false, error: 'Falta un tema concreto de tesis. Pregúntaselo al estudiante antes de registrar el diagnóstico.' };
@@ -317,7 +317,16 @@ export const HERRAMIENTAS = {
         return solicitarDiagnostico(tx, { oportunidadId, temaTesis: e.tema_tesis, tipoTesis: e.tipo_tesis,
           avanceDeclarado: e.avance_declarado, tieneEmpresaAplicacion: e.tiene_empresa_aplicacion, limitaciones: e.limitaciones }, null, 'AGENTE');
       });
-      return { ok: true, diagnosticoId: r.diagnostico_id, siguiente: 'Entrega ahora el diagnóstico con entregar_diagnostico y luego verifica con calificar_aptitud, en este mismo turno.' };
+      // En la misma llamada: entrega el diagnóstico y verifica la aptitud (evita dos rondas más con el modelo).
+      const refrescar = async () => { const { cargarContexto } = await import('./contexto.js'); Object.assign(cx, await cargarContexto(cx.conversacionId)); };
+      await refrescar();
+      const herr = HERRAMIENTAS as unknown as Record<string, { ejecutar(c: ContextoAgente, x: unknown): Promise<any> }>;
+      const entrega = await herr.entregar_diagnostico.ejecutar(cx, {});
+      if (!entrega.ok) return { ok: true, diagnosticoId: r.diagnostico_id, entrega, siguiente: 'No se pudo entregar todavía: revisa el detalle; si derivó, avisa que continuará una persona.' };
+      await refrescar();
+      const aptitud = await herr.calificar_aptitud.ejecutar(cx, {});
+      return { ok: true, diagnosticoId: r.diagnostico_id, resumen_diagnostico: entrega.resumen, aptitud: aptitud.ok ? 'APTA_PARA_COTIZAR' : aptitud,
+        siguiente: aptitud.ok ? 'Cuéntale el resumen en 2 o 3 líneas y ofrécele cotizar o la charla gratuita.' : 'No quedó apta todavía: revisa el detalle; si derivó, avisa que continuará una persona.' };
     },
   }),
   actualizar_diagnostico_pendiente: h({

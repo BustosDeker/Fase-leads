@@ -17,6 +17,8 @@ export function sumarUso(a: UsoTokens, entrada: unknown, salida: unknown): UsoTo
   return { entrada: a.entrada + inN, salida: a.salida + outN, total: a.total + inN + outN };
 }
 
+const ESPERA_MAXIMA_MS = 75_000;
+
 export async function fetchConReintentos(peticion: () => Promise<Response>): Promise<Response> {
   for (let intento = 0; intento <= 2; intento++) {
     const respuesta = await peticion();
@@ -25,6 +27,9 @@ export async function fetchConReintentos(peticion: () => Promise<Response>): Pro
     const retryAfter = respuesta.headers.get('retry-after');
     const esperaIndicada = retryAfter == null ? 0 : /^\d+(?:\.\d+)?$/.test(retryAfter.trim())
       ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now());
+    // Si el proveedor pide esperar mucho (p. ej. cuota diaria agotada), no dejes al estudiante en silencio:
+    // se devuelve el 429 ya mismo para que el turno falle rápido y se derive a una persona.
+    if (esperaIndicada > ESPERA_MAXIMA_MS) return respuesta;
     await new Promise((resolve) => setTimeout(resolve, Math.max(250 * 2 ** intento, esperaIndicada)));
   }
   throw new Error('No se pudo completar la solicitud al proveedor.');
