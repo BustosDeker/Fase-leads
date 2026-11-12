@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fechaHora } from '../formato';
 import { useLiveEvents } from '../hooks/useLiveEvents';
-import { Aviso, Bloque, BuscadorLead, Chip, ChipEstado, Encabezado } from '../components/ui';
+import { Aviso, Bloque, BuscadorLead, CampoBusqueda, Chip, ChipEstado, Encabezado, SelectFiltro, coincide, useFiltros } from '../components/ui';
 import { ConexionWhatsApp } from '../components/ConexionWhatsApp';
 
 type F = Record<string, any>;
@@ -17,6 +17,10 @@ const NOMBRE_HERRAMIENTA: Record<string, string> = {
   consultar_horarios: 'Consultó horarios', agendar_cita: 'Agendó cita', escalar_a_humano: 'Derivó a una persona',
 };
 const NOMBRE_PROVEEDOR: Record<string, string> = { mock: 'Modo sin IA (reglas)', anthropic: 'Claude (Anthropic)', openai: 'OpenAI', gemini: 'Gemini' };
+const iniciales = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+/** «hace 5 min», «hace 3 h», o la fecha si es de otro día. */
+const haceCuanto = (iso: string) => { const m = (Date.now() - new Date(iso).getTime()) / 60_000;
+  return m < 1 ? 'ahora' : m < 60 ? `hace ${Math.floor(m)} min` : m < 24 * 60 ? `hace ${Math.floor(m / 60)} h` : fechaHora(iso); };
 const motivo = (m: string) => m.replaceAll('_', ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
 export function Conversaciones() {
@@ -24,11 +28,17 @@ export function Conversaciones() {
   const actual = Number(params.get('c')) || null;
   const cliente = useQueryClient();
   const navegar = useNavigate();
-  const [filtroCanal, setFiltroCanal] = useState('');
+  const { f, fijar, activos, limpiar } = useFiltros({ canal: '', bandeja: '', buscar: '' });
+  const [mostrar, setMostrar] = useState(30);
+  // Abre una conversación conservando los filtros de la bandeja.
+  const abrirConversacion = (id: number) => setParams((p) => { const n = new URLSearchParams(p); n.set('c', String(id)); return n; });
   const [leadWhatsApp, setLeadWhatsApp] = useState<F | null>(null);
 
   const estado = useQuery({ queryKey: ['agente-estado'], queryFn: () => api.get<F>('/api/agente/estado') });
-  const lista = useQuery({ queryKey: ['conversaciones', filtroCanal], queryFn: () => api.get<F[]>('/api/conversaciones', { canal: filtroCanal }) });
+  const lista = useQuery({ queryKey: ['conversaciones', f.canal], queryFn: () => api.get<F[]>('/api/conversaciones', { canal: f.canal }) });
+  const bandejaDe = (c: F) => (c.estado === 'CERRADA' ? 'cerrada' : c.escalamientos_pendientes > 0 ? 'derivacion' : c.control_humano ? 'persona' : 'agente');
+  const cuenta = (b: string) => (lista.data ?? []).filter((c) => bandejaDe(c) === b).length;
+  const visibles = (lista.data ?? []).filter((c) => (!f.bandeja || bandejaDe(c) === f.bandeja) && coincide(f.buscar, c.estudiante, c.ultimo_texto));
   const det = useQuery({ queryKey: ['conversacion', actual], enabled: !!actual, queryFn: () => api.get<F>(`/api/conversaciones/${actual}`) });
   useLiveEvents({ conversacion: (d: { conversacionId: number }) => {
     cliente.invalidateQueries({ queryKey: ['conversaciones'] });
@@ -37,14 +47,14 @@ export function Conversaciones() {
 
   const nueva = useMutation({
     mutationFn: (b: F) => api.post<F>('/api/simulador/conversaciones', b),
-    onSuccess: (r) => { setParams({ c: String(r.conversacion_id) }); cliente.invalidateQueries({ queryKey: ['conversaciones'] }); },
+    onSuccess: (r) => { abrirConversacion(r.conversacion_id); cliente.invalidateQueries({ queryKey: ['conversaciones'] }); },
   });
   const [nombres, setNombres] = useState('');
   const [apellidos, setApellidos] = useState('');
   // El agente escribe primero por WhatsApp a un lead que ya dio su consentimiento.
   const iniciar = useMutation({
     mutationFn: (leadId: number) => api.post<F>('/api/whatsapp/iniciar', { leadId }),
-    onSuccess: (r) => { setParams({ c: String(r.conversacionId) }); cliente.invalidateQueries({ queryKey: ['conversaciones'] }); },
+    onSuccess: (r) => { abrirConversacion(r.conversacionId); cliente.invalidateQueries({ queryKey: ['conversaciones'] }); },
   });
   const activarWhatsApp = useMutation({
     mutationFn: ({ leadId, habilitado }: { leadId: number; habilitado: boolean }) =>
@@ -67,6 +77,48 @@ export function Conversaciones() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[340px_1fr]">
         <div className="flex flex-col gap-5">
+          <Bloque titulo="Bandeja" origen={`${visibles.length} de ${(lista.data ?? []).length} conversaciones`}
+            accion={activos > 0 ? <button type="button" className="text-sm font-semibold underline-offset-2 hover:underline" onClick={limpiar}>✕ Limpiar</button> : undefined}>
+            <div className="flex flex-col gap-2">
+              <CampoBusqueda valor={f.buscar} alCambiar={(v) => fijar({ buscar: v })} placeholder="Estudiante o último mensaje" etiqueta="Buscar" className="w-full" />
+              <div className="grid grid-cols-2 gap-2">
+                <SelectFiltro etiqueta="Canal" valor={f.canal} alCambiar={(v) => fijar({ canal: v })} todos="Todos" className="w-full"
+                  opciones={[['SIMULADOR', 'Simulador'], ['WHATSAPP', 'WhatsApp']]} />
+                <SelectFiltro etiqueta="Bandeja" valor={f.bandeja} alCambiar={(v) => fijar({ bandeja: v })} todos="Todas" className="w-full"
+                  opciones={[['agente', `Con el agente (${cuenta('agente')})`], ['persona', `Con una persona (${cuenta('persona')})`],
+                    ['derivacion', `Derivación pendiente (${cuenta('derivacion')})`], ['cerrada', `Cerradas (${cuenta('cerrada')})`]]} />
+              </div>
+            </div>
+            {lista.isError && <Aviso>{(lista.error as Error).message}</Aviso>}
+            {lista.data?.length === 0 && <p className="nota mt-3">Todavía no hay conversaciones. Inicia una de prueba.</p>}
+            {lista.data && lista.data.length > 0 && visibles.length === 0 && <p className="nota mt-3 py-4 text-center">Ninguna conversación coincide con los filtros.</p>}
+            <ul className="-mx-2 mt-3 flex max-h-[62vh] flex-col divide-y divide-linea overflow-y-auto">
+              {visibles.slice(0, mostrar).map((c) => (
+                <li key={c.conversacion_id}>
+                  <button onClick={() => abrirConversacion(c.conversacion_id)}
+                    className={`flex w-full flex-col gap-1 rounded-lg px-2 py-2.5 text-left transition-colors ${c.conversacion_id === actual ? 'bg-fondo ring-1 ring-tinta/30' : 'hover:bg-fondo'}`}>
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-tinta text-xs font-bold text-white">{iniciales(c.estudiante)}</span>
+                        <span className="truncate text-sm font-semibold">{c.estudiante}</span>
+                      </span>
+                      <span className="nota whitespace-nowrap">{c.ultimo_mensaje ? haceCuanto(c.ultimo_mensaje) : ''}</span>
+                    </span>
+                    <span className="truncate pl-10 text-xs text-tinta-2">{!c.ultimo_texto ? 'Sin mensajes todavía' : `${c.ultimo_emisor === 'BOT' ? 'Agente: ' : c.ultimo_emisor && c.ultimo_emisor !== 'CLIENTE' ? 'Asesor: ' : ''}${c.ultimo_texto}`}</span>
+                    <span className="flex flex-wrap gap-1 pl-10">
+                      <Chip tono="apagado">{c.canal_mensajeria === 'SIMULADOR' ? 'Simulador' : 'WhatsApp'}</Chip>
+                      {c.estado_oportunidad && <ChipEstado estado={c.estado_oportunidad} />}
+                      {c.control_humano ? <Chip tono="regular">▲ Con una persona</Chip> : null}
+                      {c.escalamientos_pendientes > 0 && <Chip tono="malo">■ Derivación pendiente</Chip>}
+                      {c.no_contactar ? <Chip tono="apagado">– No contactar</Chip> : null}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {visibles.length > mostrar && <button className="boton-claro mt-3 w-full" onClick={() => setMostrar(mostrar + 30)}>Mostrar más ({visibles.length - mostrar} restantes)</button>}
+          </Bloque>
+
           <Bloque titulo="Nueva conversación de prueba" origen="Simulador: escribes como el estudiante; el agente responde con las mismas reglas que en WhatsApp">
             <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); nueva.mutate({ nombres: nombres || undefined, apellidos: apellidos || undefined }); }}>
               <div className="grid grid-cols-2 gap-2">
@@ -109,33 +161,6 @@ export function Conversaciones() {
             {iniciar.data && <div className="mt-2"><Aviso tipo="ok">Mensaje enviado a {iniciar.data.enviadoA}. Cuando responda, el agente continúa.</Aviso></div>}
           </Bloque>
 
-          <Bloque titulo="Conversaciones" accion={
-            <select className="campo w-36" value={filtroCanal} onChange={(e) => setFiltroCanal(e.target.value)} aria-label="Canal">
-              <option value="">Todas</option><option value="SIMULADOR">Simulador</option><option value="WHATSAPP">WhatsApp</option>
-            </select>}>
-            {lista.isError && <Aviso>{(lista.error as Error).message}</Aviso>}
-            {lista.data?.length === 0 && <p className="nota">Todavía no hay conversaciones. Inicia una de prueba.</p>}
-            <ul className="-mx-2 flex max-h-[60vh] flex-col overflow-y-auto">
-              {lista.data?.map((c) => (
-                <li key={c.conversacion_id}>
-                  <button onClick={() => setParams({ c: String(c.conversacion_id) })}
-                    className={`flex w-full flex-col gap-1 rounded-lg px-2 py-2.5 text-left ${c.conversacion_id === actual ? 'bg-fondo ring-1 ring-tinta/30' : 'hover:bg-fondo'}`}>
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-semibold">{c.estudiante}</span>
-                      <span className="nota whitespace-nowrap">{c.ultimo_mensaje ? fechaHora(c.ultimo_mensaje) : ''}</span>
-                    </span>
-                    <span className="truncate text-xs text-tinta-2">{c.ultimo_emisor === 'CLIENTE' ? '' : c.ultimo_emisor === 'BOT' ? 'Agente: ' : 'Asesor: '}{c.ultimo_texto ?? 'Sin mensajes'}</span>
-                    <span className="flex flex-wrap gap-1">
-                      <Chip tono="apagado">{c.canal_mensajeria === 'SIMULADOR' ? 'Simulador' : 'WhatsApp'}</Chip>
-                      {c.control_humano ? <Chip tono="regular">▲ Con una persona</Chip> : null}
-                      {c.escalamientos_pendientes > 0 && <Chip tono="malo">■ Derivación pendiente</Chip>}
-                      {c.no_contactar ? <Chip tono="apagado">– No contactar</Chip> : null}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </Bloque>
         </div>
 
         {!actual ? (
