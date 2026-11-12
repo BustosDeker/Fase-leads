@@ -1,11 +1,11 @@
 // Cotizador versionado: base + extras + recargos − descuentos con la regla aplicada, vigencia y versión.
 // Si lo pedido supera el tope de descuento o deja el precio bajo el mínimo, la propuesta queda BLOQUEADA.
-import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fecha, fechaHora } from '../formato';
-import { Aviso, Bloque, BuscadorLead, Chip, ChipEstado, Encabezado, soles } from '../components/ui';
+import { Aviso, Bloque, BuscadorLead, CampoBusqueda, Chip, ChipEstado, DatoClave, Encabezado, Iniciales, PasosEstado, Segmentos, Tabla, coincide, soles } from '../components/ui';
 
 interface Ajuste { tipo: 'DESCUENTO' | 'RECARGO'; concepto: string; porcentaje: number; monto: number }
 interface Cotizacion { precioBase: number; montoExtras: number; recargo: number; descuento: number; precioFinal: number; precioMinimo: number;
@@ -36,6 +36,43 @@ function Desglose({ q }: { q: Pick<Cotizacion, 'precioBase' | 'montoExtras' | 'r
   );
 }
 
+interface OpPipe { oportunidad_id: number; lead_id: number; estado: string; fecha_inicio: string; desde: string | null; es_demo: boolean;
+  estudiante: string; responsable: string; carrera: string | null; precio: number | null; version: number | null }
+const diasDesde = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000) : null);
+
+/** Sin estudiante elegido: oportunidades aptas o en negociación, con búsqueda, pestañas y paginación. */
+function ListasParaCotizar() {
+  const navegar = useNavigate();
+  const q = useQuery({ queryKey: ['pipeline'], queryFn: () => api.get<OpPipe[]>('/api/pipeline') });
+  const [texto, setTexto] = useState('');
+  const [estado, setEstado] = useState('');
+  const base = useMemo(() => (q.data ?? []).filter((o) => ['APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(o.estado)), [q.data]);
+  const filas = useMemo(() => base.filter((o) => (!estado || o.estado === estado) && coincide(texto, o.estudiante, o.carrera, o.oportunidad_id)), [base, estado, texto]);
+  return (
+    <Bloque titulo="Oportunidades listas para cotizar" origen="Aptas para cotizar (primera propuesta) o en negociación (nueva versión) · elige una fila">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+        <Segmentos etiqueta="Estado" valor={estado} alCambiar={setEstado} opciones={[
+          { v: '', t: 'Todas', n: base.length }, { v: 'APTA_PARA_COTIZAR', t: 'Sin propuesta aún', n: base.filter((o) => o.estado === 'APTA_PARA_COTIZAR').length },
+          { v: 'EN_NEGOCIACION', t: 'En negociación', n: base.filter((o) => o.estado === 'EN_NEGOCIACION').length }]} />
+        <CampoBusqueda valor={texto} alCambiar={setTexto} placeholder="Estudiante, carrera o N.º" className="w-full sm:w-72" />
+      </div>
+      {q.isError && <Aviso>{(q.error as Error).message}</Aviso>}
+      <Tabla filas={filas} clave={(o) => o.oportunidad_id} porPagina={10} vacio={q.isLoading ? 'Cargando…' : 'No hay oportunidades por cotizar con estos filtros.'}
+        alClic={(o) => navegar(`/leads/cotizador?op=${o.oportunidad_id}`)}
+        columnas={[
+          { titulo: 'Estudiante', orden: (o) => o.estudiante, celda: (o) => <div className="flex items-center gap-2"><Iniciales nombre={o.estudiante} />
+            <div><div className="font-medium">{o.estudiante}</div><div className="nota">#{o.oportunidad_id} · {o.carrera ?? 'sin perfil'}{o.es_demo ? ' · prueba' : ''}</div></div></div> },
+          { titulo: 'Estado', orden: (o) => o.estado, celda: (o) => <ChipEstado estado={o.estado} /> },
+          { titulo: 'Responsable', orden: (o) => o.responsable, celda: (o) => o.responsable },
+          { titulo: 'Días en el estado', derecha: true, orden: (o) => diasDesde(o.desde), celda: (o) => { const d = diasDesde(o.desde);
+            const tarde = d !== null && d >= 2 && o.estado === 'APTA_PARA_COTIZAR';
+            return d === null ? '—' : <span className={tarde ? 'font-semibold text-malo-texto' : ''}>{tarde ? '■ ' : ''}{d}</span>; } },
+          { titulo: 'Propuesta vigente', derecha: true, orden: (o) => o.precio, celda: (o) => (o.precio ? <>{soles(o.precio)} <span className="nota">v{o.version}</span></> : '—') },
+        ]} />
+    </Bloque>
+  );
+}
+
 export function Cotizador() {
   const [params, setParams] = useSearchParams();
   const cliente = useQueryClient();
@@ -54,6 +91,7 @@ export function Cotizador() {
   const editable = d && ['APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(d.oportunidad.estado);
   const siguiente = (d?.versiones.at(-1)?.version ?? 0) + 1;
   const tarifa = d?.servicios.find((x) => x.servicioId === s.servicioId)?.tarifa;
+  const vigente = d ? [...d.versiones].reverse().find((v) => ['PRESENTADA', 'ACEPTADA'].includes(v.estado)) : undefined;
 
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-5">
@@ -64,19 +102,34 @@ export function Cotizador() {
             if (f.oportunidades[0]) setParams({ op: String(f.oportunidades[0].oportunidad_id) });
           }} /></div>
       </Encabezado>
-      {!opId && <div className="tarjeta p-8 text-center text-sm text-tinta-2">Elige un estudiante o abre el cotizador desde su ficha nominal.</div>}
+      {!opId && <ListasParaCotizar />}
       {cx.isError && <Aviso>{(cx.error as Error).message}</Aviso>}
 
       {d && (
         <>
-          <section className="tarjeta flex flex-wrap items-center justify-between gap-3 p-5">
-            <div>
-              <div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-bold">{d.oportunidad.estudiante}</h2><ChipEstado estado={d.oportunidad.estado} /></div>
-              <p className="nota mt-1">Oportunidad #{d.oportunidad.oportunidad_id} · {d.oportunidad.carrera ?? 'sin carrera'} · {d.oportunidad.universidad ?? 'sin universidad'} ·
-                avance {d.oportunidad.avance_declarado != null ? `${Number(d.oportunidad.avance_declarado)} %` : '—'} · tesis {d.oportunidad.tipo_tesis ?? '—'} ·
-                fecha límite {fecha(d.oportunidad.fecha_limite)}</p>
+          <section className="tarjeta overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-5">
+              <div className="flex min-w-0 items-center gap-4">
+                <Iniciales nombre={d.oportunidad.estudiante} grande />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2"><h2 className="text-xl font-bold">{d.oportunidad.estudiante}</h2><ChipEstado estado={d.oportunidad.estado} /></div>
+                  <p className="nota mt-1">Oportunidad #{d.oportunidad.oportunidad_id} · {d.versiones.length} versión(es) presentada(s)</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link className="boton-claro" to="/leads/cotizador">‹ Otras oportunidades</Link>
+                <Link className="boton-claro" to={`/leads/ficha?lead=${d.oportunidad.lead_id}&op=${d.oportunidad.oportunidad_id}`}>Ver ficha</Link>
+              </div>
             </div>
-            <Link className="boton-claro" to={`/leads/ficha?lead=${d.oportunidad.lead_id}&op=${d.oportunidad.oportunidad_id}`}>Ver ficha</Link>
+            <div className="grid grid-cols-2 gap-4 border-t border-linea bg-fondo/60 px-5 py-3 sm:grid-cols-3 lg:grid-cols-6">
+              <DatoClave t="Carrera" v={d.oportunidad.carrera} />
+              <DatoClave t="Universidad" v={d.oportunidad.universidad} />
+              <DatoClave t="Avance" v={d.oportunidad.avance_declarado != null ? `${Number(d.oportunidad.avance_declarado)} %` : null} />
+              <DatoClave t="Tipo de tesis" v={d.oportunidad.tipo_tesis} />
+              <DatoClave t="Fecha límite" v={d.oportunidad.fecha_limite ? fecha(d.oportunidad.fecha_limite) : null} />
+              <DatoClave t="Propuesta vigente" v={vigente ? `${soles(vigente.precio_final)} · v${vigente.version}` : null} />
+            </div>
+            <div className="border-t border-linea px-5 py-4"><PasosEstado estado={d.oportunidad.estado} /></div>
           </section>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
@@ -108,10 +161,15 @@ export function Cotizador() {
               </div>
             </Bloque>
 
-            <Bloque titulo="Desglose" origen="Cálculo en el servidor con las reglas vigentes" className="xl:col-span-3">
+            <Bloque titulo="Desglose" origen="Cálculo en el servidor con las reglas vigentes" className="xl:sticky xl:top-4 xl:col-span-3 xl:self-start">
               {sim.isError && <Aviso>{(sim.error as Error).message}</Aviso>}
+              {!sim.data && !sim.isError && <div className="h-48 animate-pulse rounded-lg bg-fondo" aria-hidden />}
               {sim.data && (
                 <>
+                  {vigente && !sim.data.bloqueada && (() => {
+                    const dif = sim.data!.cotizacion.precioFinal - Number(vigente.precio_final);
+                    return <p className="mb-2 text-sm text-tinta-2">Frente a la versión vigente (v{vigente.version}, {soles(vigente.precio_final)}): <strong className="text-tinta">{dif === 0 ? 'mismo precio' : `${dif < 0 ? '−' : '+'} ${soles(Math.abs(dif))}`}</strong></p>;
+                  })()}
                   {sim.data.bloqueada && (
                     <div className="mb-3 rounded-lg border-2 border-malo-marca bg-malo-fondo p-3 text-sm text-malo-texto" role="alert">
                       <strong>■ Propuesta bloqueada.</strong> {sim.data.motivosBloqueo.join(' ')} Reduce el ajuste o escala el caso a un humano.
@@ -134,17 +192,16 @@ export function Cotizador() {
           <Bloque titulo="Versiones presentadas" origen="Cada modificación es una nueva versión; la aceptación se asocia a una versión concreta">
             {d.versiones.length === 0 ? <p className="nota">Aún no hay propuestas.</p> : (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {d.versiones.map((v, i) => {
-                  const ant = d.versiones[i - 1];
+                {d.versiones.map((v, i) => ({ v, ant: d.versiones[i - 1] })).reverse().map(({ v, ant }) => {
                   const dif = ant ? Number(v.precio_final) - Number(ant.precio_final) : null;
                   return (
-                    <article key={v.propuesta_id} className="rounded-lg border border-linea p-4">
-                      <div className="flex items-center justify-between"><strong>Versión {v.version}</strong>
+                    <article key={v.propuesta_id} className={`rounded-lg border p-4 ${v.propuesta_id === vigente?.propuesta_id ? 'border-2 border-tinta' : 'border-linea'}`}>
+                      <div className="flex items-center justify-between"><strong>Versión {v.version}{v.propuesta_id === vigente?.propuesta_id ? ' · vigente' : ''}</strong>
                         <Chip tono={v.estado === 'ACEPTADA' ? 'bueno' : v.estado === 'RECHAZADA' ? 'malo' : v.estado === 'PRESENTADA' ? 'neutro' : 'apagado'}>{v.estado}</Chip></div>
                       <p className="nota mb-2">{v.servicio} · {fechaHora(v.fecha_presentacion)} · vigente hasta {fecha(v.vigencia_hasta)}{v.respuesta ? ` · respuesta: ${v.respuesta}` : ''}</p>
                       <Desglose q={{ precioBase: Number(v.precio_base), montoExtras: Number(v.monto_extras), recargo: Number(v.recargo),
                         descuento: Number(v.descuento), precioFinal: Number(v.precio_final), ajustes: v.ajustes }} />
-                      {dif !== null && <p className="mt-2 text-xs text-tinta-2">Frente a v{ant!.version}: {dif === 0 ? 'mismo precio' : `${dif < 0 ? '−' : '+'} ${soles(Math.abs(dif))}`}</p>}
+                      {dif !== null && ant && <p className="mt-2 text-xs text-tinta-2">Frente a v{ant.version}: {dif === 0 ? 'mismo precio' : `${dif < 0 ? '−' : '+'} ${soles(Math.abs(dif))}`}</p>}
                     </article>
                   );
                 })}

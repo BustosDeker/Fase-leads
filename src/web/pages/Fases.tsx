@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fechaHora } from '../formato';
 import { useLiveEvents } from '../hooks/useLiveEvents';
-import { Aviso, Bloque, Chip, ChipEstado, Encabezado, Tabla, soles } from '../components/ui';
+import { Aviso, Bloque, CampoBusqueda, Chip, ChipEstado, Encabezado, Segmentos, Tabla, coincide, soles, useFiltros } from '../components/ui';
 
 type F = Record<string, any>;
 
@@ -118,23 +118,31 @@ function Payers() {
   const refrescar = () => cliente.invalidateQueries({ queryKey: ['payers'] });
   const transferir = useMutation({ mutationFn: (o: number) => api.post<F>(`/api/oportunidades/${o}/transferir`), onSuccess: refrescar });
   const confirmar = useMutation({ mutationFn: (o: number) => api.post<F>(`/api/simulador/payers/${o}/confirmar`), onSuccess: refrescar });
-  const filas = q.data ?? [];
-  const cuenta = (e: string) => filas.filter((x) => x.estado === e).length;
+  const { f, fijar } = useFiltros({ estado: '', texto: '' });
+  const todas = q.data ?? [];
+  const cuenta = (e: string) => todas.filter((x) => x.estado === e).length;
+  const filas = todas.filter((x) => (!f.estado || x.estado === f.estado) && coincide(f.texto, x.estudiante, x.servicio, x.oportunidad_id, x.event_id));
   const error = q.error ?? transferir.error ?? confirmar.error;
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-5">
       <Encabezado fase="PAYERS" ruta="Integración con LEADS" titulo="LEADS → PAYERS" />
       {error && <Aviso>{(error as Error).message}</Aviso>}
       {transferir.data && <Aviso tipo="info">Transferencia registrada ({transferir.data.idempotencyKey}). {transferir.data.envio?.detalle}</Aviso>}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <Segmentos etiqueta="Estado" valor={f.estado} alCambiar={(v) => fijar({ estado: v })} opciones={[
+          { v: '', t: 'Todas', n: todas.length }, { v: 'ACEPTADA', t: 'Por transferir', n: cuenta('ACEPTADA') },
+          { v: 'TRANSFERIDA', t: 'Esperando confirmación', n: cuenta('TRANSFERIDA') }, { v: 'PAYER_CONFIRMADO', t: 'Confirmadas', n: cuenta('PAYER_CONFIRMADO') }]} />
+        <CampoBusqueda valor={f.texto} alCambiar={(v) => fijar({ texto: v })} placeholder="Estudiante, servicio o evento" />
+      </div>
       <Bloque titulo="Bandeja y simulador de PAYERS" origen={`${cuenta('ACEPTADA')} por transferir · ${cuenta('TRANSFERIDA')} esperando confirmación · ${cuenta('PAYER_CONFIRMADO')} confirmadas`}>
-        <Tabla filas={filas} clave={(x) => x.oportunidad_id} maxFilas={15} vacio="Todavía no hay propuestas aceptadas."
+        <Tabla filas={filas} clave={(x) => x.oportunidad_id} vacio={todas.length ? 'Ninguna coincide con los filtros.' : 'Todavía no hay propuestas aceptadas.'}
           columnas={[
-            { titulo: 'Estudiante', celda: (x) => <button className="text-left" onClick={() => navegar(`/leads/ficha?lead=${x.lead_id}&op=${x.oportunidad_id}`)}>
+            { titulo: 'Estudiante', orden: (x) => x.estudiante, celda: (x) => <button className="text-left" onClick={() => navegar(`/leads/ficha?lead=${x.lead_id}&op=${x.oportunidad_id}`)}>
               <div className="font-medium underline-offset-2 hover:underline">{x.estudiante}</div><div className="nota">{x.servicio ?? '—'} · v{x.version ?? '—'}</div></button> },
-            { titulo: 'Precio final', derecha: true, celda: (x) => soles(x.precio_final) },
+            { titulo: 'Precio final', derecha: true, orden: (x) => Number(x.precio_final), celda: (x) => soles(x.precio_final) },
             { titulo: 'Estado', celda: (x) => <div className="flex flex-col items-start gap-1"><ChipEstado estado={x.estado} />
               {x.es_demo && <Chip tono="apagado">Dato de prueba</Chip>}</div> },
-            { titulo: 'Seguimiento', celda: (x) => <span className="nota">{x.fecha_confirmacion ? `Confirmada ${fechaHora(x.fecha_confirmacion)} · ${x.event_id}`
+            { titulo: 'Seguimiento', orden: (x) => +new Date(x.fecha_confirmacion ?? x.fecha_envio ?? 0), celda: (x) => <span className="nota">{x.fecha_confirmacion ? `Confirmada ${fechaHora(x.fecha_confirmacion)} · ${x.event_id}`
               : x.fecha_envio ? `Enviada ${fechaHora(x.fecha_envio)}` : 'Sin transferir'}</span> },
             { titulo: '', celda: (x) => x.estado === 'ACEPTADA'
               ? <button className="boton-claro" disabled={transferir.isPending} onClick={() => transferir.mutate(x.oportunidad_id)}>Transferir</button>
