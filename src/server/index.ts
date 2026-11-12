@@ -13,6 +13,7 @@ import { rutasTablero } from './rutas-tablero.js';
 import { rutasLeads } from './rutas-leads.js';
 import { rutasAgente } from './rutas-agente.js';
 import { rutasWhatsApp } from './rutas-whatsapp.js';
+import { rutasIntegraciones } from './rutas-integraciones.js';
 import { resumenEstado as estadoWhatsApp } from '../whatsapp/openwa.js';
 import { estadoAgente } from '../agente/motor.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
@@ -52,6 +53,7 @@ rutasTablero(app);
 rutasLeads(app);
 rutasAgente(app);
 rutasWhatsApp(app);
+rutasIntegraciones(app);
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');

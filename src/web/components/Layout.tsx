@@ -1,5 +1,5 @@
 // Estructura general: menú lateral oscuro con el embudo IMPULSE numerado 1–5, LEADS activa con sus
-// submenús, las otras fases como «pendiente», Agente Plataforma al final y, al pie, el estado de
+// submenús, las otras fases con su integración, Agente Plataforma al final y, al pie, el estado de
 // WhatsApp y SQL Server. En móvil el menú se apila sobre el contenido y se puede plegar.
 import { useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
@@ -82,7 +82,7 @@ export function Layout({ children }: { children: ReactNode }) {
                       (activa && pathname.startsWith('/leads')) || pathname === `/fase/${f.id}` ? 'bg-menu-2 text-white' : 'text-menu-texto hover:bg-menu-2 hover:text-white'}`}>
                     <span className={`flex h-6 w-6 items-center justify-center rounded-md text-xs font-bold ${activa ? 'bg-white text-tinta' : 'border border-white/25'}`}>{f.n}</span>
                     <span className="flex-1 font-semibold">{f.t}</span>
-                    {!activa && <span className="text-[10px] uppercase tracking-wide text-menu-texto/80">pendiente</span>}
+                    {!activa && <span className="text-[10px] uppercase tracking-wide text-menu-texto/80">{f.id === 'buyers' || f.id === 'payers' ? 'integración' : 'otro equipo'}</span>}
                   </NavLink>
                   {activa && (
                     <ul className="ml-5 mt-0.5 space-y-0.5 border-l border-white/15 pl-3">

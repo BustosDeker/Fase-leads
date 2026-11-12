@@ -68,7 +68,10 @@ async function responder(p: PeticionAgente): Promise<string> {
 
   switch (cx.estado) {
     case 'ABIERTA': {
-      if (ultimo.trim().length < 12) return 'Cuéntame de tu tesis: ¿cuál es el tema, cuánto avance tienes (en %) y si cuentas con una empresa o institución donde aplicarla?';
+      // Solo se registra el diagnóstico si el mensaje trae datos de la tesis (no un saludo o un pedido de información).
+      const traeTesis = hay(t, /\btema\b|\btitulo\b|\d{1,3}\s*%|\bavance\b|trata (sobre|de)|mi tesis (es|sobre|trata)|\binvestig/);
+      if (!traeTesis) return `${usuario.length <= 1 ? `¡Hola, ${cx.nombres}! Ya tengo tus datos: ${cx.perfil.carrera} en la ${cx.perfil.universidad}. ` : ''}`
+        + 'Cuéntame de tu tesis: ¿cuál es el tema, cuánto avance tienes (en %) y si cuentas con una empresa o institución donde aplicarla?';
       const avance = /(\d{1,3})\s*%/.exec(ultimo);
       const empresa = hay(t, /sin empresa|no tengo (empresa|institucion)|aun no tengo/) ? false : hay(t, /empresa|institucion|colegio|hospital|municipalidad|clinica/) ? true : undefined;
       const fecha = /(\d{1,2})[/-](\d{1,2})[/-](\d{4})/.exec(ultimo);

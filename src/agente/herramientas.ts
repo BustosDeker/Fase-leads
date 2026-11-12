@@ -231,6 +231,11 @@ export const HERRAMIENTAS = {
           await registrarEvento(tx, oportunidadId, 'PROPUESTA_RECHAZADA', 'AGENTE', e.observacion ?? null);
         } else await registrarEvento(tx, oportunidadId, 'CONTRAOFERTA', 'AGENTE', e.observacion ?? null);
       });
+      // Acuerdo aceptado: se transfiere a PAYERS de inmediato (si falla, queda para reintentar desde la pantalla PAYERS).
+      if (e.respuesta === 'ACEPTA') {
+        try { const { transferirAPayers } = await import('../integraciones/integraciones.js'); await transferirAPayers(oportunidadId, 'AGENTE'); }
+        catch (err) { console.error('[agente] transferencia a PAYERS pendiente:', (err as Error).message); }
+      }
       return { ok: true, respuesta: e.respuesta, siguiente: e.respuesta === 'ACEPTA' ? 'El área de pagos (PAYERS) le enviará el contrato y el enlace de pago; tú no pides datos de pago.' : null };
     },
   }),

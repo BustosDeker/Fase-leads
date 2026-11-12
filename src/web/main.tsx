@@ -20,6 +20,8 @@ import { Objeciones } from './pages/Objeciones';
 import { Consentimiento } from './pages/Consentimiento';
 import { Auditoria } from './pages/Auditoria';
 import { Conversaciones } from './pages/Conversaciones';
+import { Fase } from './pages/Fases';
+import { Plataforma } from './pages/Plataforma';
 
 const cliente = new QueryClient({ defaultOptions: { queries: { staleTime: 15_000, retry: 1, refetchOnWindowFocus: false } } });
 
@@ -41,6 +43,8 @@ createRoot(document.getElementById('raiz')!).render(
             <Route path="/leads/consentimiento" element={<Consentimiento />} />
             <Route path="/leads/auditoria" element={<Auditoria />} />
             <Route path="/leads/conversaciones" element={<Conversaciones />} />
+            <Route path="/fase/:fase" element={<Fase />} />
+            <Route path="/plataforma" element={<Plataforma />} />
             <Route path="*" element={<Pendiente />} />
           </Routes>
         </Layout>

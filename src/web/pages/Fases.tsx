@@ -1,0 +1,151 @@
+// Fases vecinas del embudo IMPULSE: BUYERS (entrega leads a LEADS), PAYERS (recibe acuerdos y confirma),
+// CUSTOMERS y TURNED (fuera del alcance de este proyecto). Cada una muestra su contrato con LEADS y un simulador.
+import { useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '../api';
+import { fechaHora } from '../formato';
+import { useLiveEvents } from '../hooks/useLiveEvents';
+import { Aviso, Bloque, Chip, ChipEstado, Encabezado, Tabla, soles } from '../components/ui';
+
+type F = Record<string, any>;
+
+function Codigo({ children }: { children: string }) {
+  return <pre className="overflow-x-auto whitespace-pre rounded-lg bg-fondo p-3 text-xs leading-relaxed text-tinta">{children}</pre>;
+}
+
+export function Fase() {
+  const { fase } = useParams();
+  if (fase === 'buyers') return <Buyers />;
+  if (fase === 'payers') return <Payers />;
+  const info = fase === 'customers'
+    ? { t: 'CUSTOMERS', d: 'Acompañamiento del estudiante ya contratado: asignación del asesor académico, sesiones, hitos del cronograma, observaciones de la universidad y reportes de calidad.' }
+    : { t: 'TURNED', d: 'Cierre del servicio y fidelización: encuesta de satisfacción, certificado de garantía y referidos que vuelven a BUYERS.' };
+  return (
+    <div className="mx-auto flex max-w-[1000px] flex-col gap-5">
+      <Encabezado fase={info.t} ruta="Resumen" titulo={info.t} />
+      <Bloque titulo="Fuera del alcance de este proyecto" origen="Metodología IMPULSE · fase a cargo de otro equipo">
+        <p className="text-sm text-tinta-2">{info.d}</p>
+        <p className="mt-3 text-sm text-tinta-2">LEADS entrega a PAYERS los acuerdos aceptados; PAYERS confirma la contratación y, desde ahí, el estudiante pasa a {info.t === 'CUSTOMERS' ? 'esta fase' : 'CUSTOMERS y luego a esta fase'}. Las tablas de la base de datos ya existen en el modelo del informe, pero sus pantallas las construye el equipo responsable.</p>
+      </Bloque>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ BUYERS
+const EJEMPLO_BUYERS = `POST /api/buyers
+Authorization: Bearer <BUYERS_TOKEN de .env>
+Content-Type: application/json
+
+{
+  "nombres": "Rosa", "apellidos": "Quispe Mendoza",
+  "whatsapp": "51987654321",
+  "consentimiento": { "otorgado": true, "fecha": "2026-11-10T15:20:00", "evidencia": "Marcó la casilla en el formulario de Instagram" },
+  "canal": "Instagram", "necesidad": "Asesoría integral de tesis",
+  "universidad": "UNT", "carrera": "Ingeniería Industrial", "etapa": "EGRESADO"
+}
+
+→ 201 { "creado": true, "leadId": 230, "oportunidadId": 247 }   (200 si ese WhatsApp ya era lead)
+→ 401 sin token · 400 sin consentimiento o datos inválidos`;
+
+function Buyers() {
+  const navegar = useNavigate();
+  const [f, setF] = useState({ nombres: '', apellidos: '', whatsapp: '', canal: 'Instagram', universidad: '', carrera: '', etapa: '', evidencia: 'Aceptó la política de datos en el formulario' });
+  const crear = useMutation({ mutationFn: () => api.post<F>('/api/simulador/buyers', {
+    nombres: f.nombres, apellidos: f.apellidos, whatsapp: f.whatsapp, canal: f.canal || undefined, universidad: f.universidad || undefined,
+    carrera: f.carrera || undefined, etapa: f.etapa || undefined, consentimiento: { otorgado: true, evidencia: f.evidencia } }) });
+  const campo = (k: keyof typeof f, etiqueta: string, extra: F = {}) => (
+    <label><span className="etiqueta-campo">{etiqueta}</span><input className="campo" value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} {...extra} /></label>);
+  return (
+    <div className="mx-auto flex max-w-[1400px] flex-col gap-5">
+      <Encabezado fase="BUYERS" ruta="Integración con LEADS" titulo="BUYERS → LEADS" />
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <Bloque titulo="Contrato de integración" origen="BUYERS envía cada lead con su consentimiento (Ley 29733). Sin consentimiento, LEADS lo rechaza.">
+          <Codigo>{EJEMPLO_BUYERS}</Codigo>
+          <ul className="mt-3 flex flex-col gap-1 text-sm text-tinta-2">
+            <li>• Idempotente por número de WhatsApp: reenviar el mismo lead no lo duplica.</li>
+            <li>• Crea contacto, buyer, lead y oportunidad «Abierta», y guarda el consentimiento en el historial con medio BUYERS.</li>
+            <li>• Si llega universidad, carrera y etapa reconocibles, se registra también el perfil académico.</li>
+            <li>• Cuando ese estudiante escriba por WhatsApp, el agente continúa sobre su oportunidad sin volver a pedir el consentimiento ni la frase de activación.</li>
+          </ul>
+        </Bloque>
+        <Bloque titulo="Simulador de BUYERS" origen="Envía un lead como lo haría BUYERS (se marca como dato de prueba)">
+          <form className="grid grid-cols-1 gap-3 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); crear.mutate(); }}>
+            {campo('nombres', 'Nombres', { required: true, minLength: 2 })}
+            {campo('apellidos', 'Apellidos', { required: true, minLength: 2 })}
+            {campo('whatsapp', 'WhatsApp (con 51)', { required: true, inputMode: 'numeric', placeholder: '51987654321' })}
+            {campo('canal', 'Canal de captación', { list: 'canales' })}
+            <datalist id="canales"><option>Instagram</option><option>TikTok</option><option>Facebook</option><option>Referidos</option><option>Convenio universitario</option></datalist>
+            {campo('universidad', 'Universidad (opcional)', { placeholder: 'UNT, UPAO, UCV…' })}
+            {campo('carrera', 'Carrera (opcional)')}
+            <label><span className="etiqueta-campo">Etapa (opcional)</span>
+              <select className="campo" value={f.etapa} onChange={(e) => setF({ ...f, etapa: e.target.value })}>
+                <option value="">—</option><option value="CICLO_IX">IX ciclo</option><option value="CICLO_X">X ciclo</option><option value="EGRESADO">Egresado</option><option value="BACHILLER">Bachiller</option>
+              </select></label>
+            {campo('evidencia', 'Evidencia del consentimiento', { required: true })}
+            <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+              <button className="boton-negro" disabled={crear.isPending}>Enviar lead a LEADS</button>
+              {crear.data && <span className="text-sm">{crear.data.creado ? '● Lead creado' : 'ⓘ Ese WhatsApp ya era lead'} (#{crear.data.leadId}){' '}
+                <button type="button" className="underline" onClick={() => navegar(`/leads/ficha?lead=${crear.data!.leadId}&op=${crear.data!.oportunidadId ?? ''}`)}>ver ficha</button></span>}
+            </div>
+          </form>
+          {crear.isError && <div className="mt-3"><Aviso>{(crear.error as Error).message}</Aviso></div>}
+        </Bloque>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ PAYERS
+const EJEMPLO_PAYERS = `LEADS → PAYERS (al aceptar la propuesta)
+POST <PAYERS_URL>            Idempotency-Key: leads-op247-v2
+{ "oportunidad_id": 247, "propuesta_id": 512, "version": 2, "servicio": "…",
+  "precio_final": 2376.00, "estudiante": "…", "whatsapp": "51…", "correo": null }
+
+PAYERS → LEADS (contratación confirmada)
+POST /api/payers/confirmacion
+Authorization: Bearer <PAYERS_TOKEN de .env>
+{ "event_id": "pay-7f3a91", "oportunidad_id": 247, "fecha_confirmacion": "2026-11-12T10:05:00", "orden_pago_ref": 88 }
+
+→ 200 { "duplicado": false }  (repetir el mismo event_id devuelve { "duplicado": true } sin cambios)
+→ 409 si la oportunidad no está transferida · 401 sin token`;
+
+function Payers() {
+  const navegar = useNavigate();
+  const cliente = useQueryClient();
+  const q = useQuery({ queryKey: ['payers'], queryFn: () => api.get<F[]>('/api/payers/bandeja') });
+  useLiveEvents({ oltp: () => cliente.invalidateQueries({ queryKey: ['payers'] }) });
+  const refrescar = () => cliente.invalidateQueries({ queryKey: ['payers'] });
+  const transferir = useMutation({ mutationFn: (o: number) => api.post<F>(`/api/oportunidades/${o}/transferir`), onSuccess: refrescar });
+  const confirmar = useMutation({ mutationFn: (o: number) => api.post<F>(`/api/simulador/payers/${o}/confirmar`), onSuccess: refrescar });
+  const filas = q.data ?? [];
+  const cuenta = (e: string) => filas.filter((x) => x.estado === e).length;
+  const error = q.error ?? transferir.error ?? confirmar.error;
+  return (
+    <div className="mx-auto flex max-w-[1400px] flex-col gap-5">
+      <Encabezado fase="PAYERS" ruta="Integración con LEADS" titulo="LEADS → PAYERS" />
+      {error && <Aviso>{(error as Error).message}</Aviso>}
+      {transferir.data && <Aviso tipo="info">Transferencia registrada ({transferir.data.idempotencyKey}). {transferir.data.envio?.detalle}</Aviso>}
+      <Bloque titulo="Bandeja y simulador de PAYERS" origen={`${cuenta('ACEPTADA')} por transferir · ${cuenta('TRANSFERIDA')} esperando confirmación · ${cuenta('PAYER_CONFIRMADO')} confirmadas`}>
+        <Tabla filas={filas} clave={(x) => x.oportunidad_id} maxFilas={15} vacio="Todavía no hay propuestas aceptadas."
+          columnas={[
+            { titulo: 'Estudiante', celda: (x) => <button className="text-left" onClick={() => navegar(`/leads/ficha?lead=${x.lead_id}&op=${x.oportunidad_id}`)}>
+              <div className="font-medium underline-offset-2 hover:underline">{x.estudiante}</div><div className="nota">{x.servicio ?? '—'} · v{x.version ?? '—'}</div></button> },
+            { titulo: 'Precio final', derecha: true, celda: (x) => soles(x.precio_final) },
+            { titulo: 'Estado', celda: (x) => <div className="flex flex-col items-start gap-1"><ChipEstado estado={x.estado} />
+              {x.es_demo && <Chip tono="apagado">Dato de prueba</Chip>}</div> },
+            { titulo: 'Seguimiento', celda: (x) => <span className="nota">{x.fecha_confirmacion ? `Confirmada ${fechaHora(x.fecha_confirmacion)} · ${x.event_id}`
+              : x.fecha_envio ? `Enviada ${fechaHora(x.fecha_envio)}` : 'Sin transferir'}</span> },
+            { titulo: '', celda: (x) => x.estado === 'ACEPTADA'
+              ? <button className="boton-claro" disabled={transferir.isPending} onClick={() => transferir.mutate(x.oportunidad_id)}>Transferir</button>
+              : x.estado === 'TRANSFERIDA'
+                ? <button className="boton-negro" disabled={confirmar.isPending} onClick={() => confirmar.mutate(x.oportunidad_id)}>Simular confirmación</button>
+                : null },
+          ]} />
+      </Bloque>
+      <Bloque titulo="Contrato de integración" origen="LEADS no guarda montos pagados ni medios de pago: solo la referencia de la confirmación">
+        <Codigo>{EJEMPLO_PAYERS}</Codigo>
+      </Bloque>
+    </div>
+  );
+}

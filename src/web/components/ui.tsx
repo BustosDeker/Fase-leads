@@ -150,11 +150,11 @@ export function BuscadorLead({ alElegir, placeholder = 'Nombre, WhatsApp o ident
 export const soles = (n: number | string | null | undefined) =>
   n === null || n === undefined ? '—' : `S/ ${Number(n).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function Encabezado({ ruta, titulo, children }: { ruta: string; titulo: string; children?: ReactNode }) {
+export function Encabezado({ ruta, titulo, children, fase = 'LEADS' }: { ruta: string; titulo: string; children?: ReactNode; fase?: string }) {
   return (
     <header className="flex flex-wrap items-end justify-between gap-3">
       <div>
-        <nav className="text-xs text-tinta-3" aria-label="Ruta">IMPULSE › LEADS › {ruta}</nav>
+        <nav className="text-xs text-tinta-3" aria-label="Ruta">IMPULSE › {fase} › {ruta}</nav>
         <h1 className="mt-1 text-2xl font-bold tracking-tight">{titulo}</h1>
       </div>
       {children}

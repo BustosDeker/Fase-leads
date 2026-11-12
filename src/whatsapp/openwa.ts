@@ -179,9 +179,11 @@ export async function manejarEvento(evento: { event: string; data: any }): Promi
   }
   if (!texto) return { procesado: false, motivo: 'mensaje vacío' };
 
-  const existente = await (await oltp()).request().input('chat', sql.VarChar, chatId)
-    .query(`SELECT TOP 1 conversacion_id FROM dbo.CONVERSACION WHERE chat_id = @chat AND canal_mensajeria = 'WHATSAPP'`);
-  if (!existente.recordset[0] && !frasesCoinciden(texto, c.frase))
+  const existente = await (await oltp()).request().input('chat', sql.VarChar, chatId).input('w', sql.VarChar, numero.slice(0, 20))
+    .query(`SELECT TOP 1 conversacion_id FROM dbo.CONVERSACION WHERE chat_id = @chat AND canal_mensajeria = 'WHATSAPP';
+            SELECT COUNT(*) AS n FROM dbo.CONTACTO c JOIN dbo.BUYER b ON b.contacto_id = c.contacto_id WHERE c.whatsapp = @w;`);
+  const leadConocido = (existente.recordsets as any[])[1][0].n > 0;   // lead que llegó desde BUYERS: no necesita la frase
+  if (!existente.recordset[0] && !leadConocido && !frasesCoinciden(texto, c.frase))
     return { procesado: false, motivo: 'primer mensaje sin la frase de activación' };
 
   const conv = existente.recordset[0]?.conversacion_id ?? await asegurarConversacionWhatsApp(chatId, m.contact?.pushName || m.contact?.name || null);

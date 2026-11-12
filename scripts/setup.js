@@ -49,6 +49,7 @@ const AUTO = {
   DB_PASSWORD: claveSql,
   OPENWA_WEBHOOK_SECRET: () => secreto(32),
   PAYERS_TOKEN: () => secreto(32),
+  BUYERS_TOKEN: () => secreto(32),
 };
 let env = fs.existsSync(envPath)
   ? fs.readFileSync(envPath, 'utf8')
@@ -57,6 +58,9 @@ const creado = !fs.existsSync(envPath);
 for (const [clave, gen] of Object.entries(AUTO)) {
   const re = new RegExp(`^${clave}=\\s*$`, 'm');
   if (re.test(env)) env = env.replace(re, `${clave}=${gen()}`);
+  else if (!new RegExp(`^${clave}=`, 'm').test(env)) env = env.trimEnd() + `
+${clave}=${gen()}
+`;   // variable nueva en una versión posterior
 }
 fs.writeFileSync(envPath, env);
 ok(creado ? '.env creado desde .env.example (secretos generados)' : '.env existente conservado (secretos vacíos completados)');

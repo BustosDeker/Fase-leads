@@ -1,4 +1,4 @@
-// Pantalla provisional para los módulos que se construyen en etapas siguientes.
+// Página para rutas que no existen.
 import { useLocation } from 'react-router-dom';
 
 const MODULOS: Record<string, { titulo: string; etapa: string; descripcion: string }> = {

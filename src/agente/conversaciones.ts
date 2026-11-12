@@ -57,6 +57,18 @@ export async function asegurarConversacionWhatsApp(chatId: string, nombreVisible
     SELECT TOP 1 conversacion_id FROM dbo.CONVERSACION WHERE chat_id = @chat AND canal_mensajeria = 'WHATSAPP' ORDER BY conversacion_id DESC`);
   if (ex.recordset[0]) return ex.recordset[0].conversacion_id as number;
   const numero = chatId.replace(/@.*/, '');
+  // ¿Ya es un lead (p. ej. llegó desde BUYERS con su consentimiento)? Se abre la conversación sobre su oportunidad vigente.
+  const conocido = await pool.request().input('w', sql.VarChar, numero.slice(0, 20)).query(`
+    SELECT TOP 1 c.contacto_id, o.oportunidad_id FROM dbo.CONTACTO c JOIN dbo.BUYER b ON b.contacto_id = c.contacto_id JOIN dbo.LEAD l ON l.buyer_id = b.buyer_id
+    JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.lead_id = l.lead_id WHERE c.whatsapp = @w
+    ORDER BY CASE WHEN o.estado IN ('DESCARTADA','PAYER_CONFIRMADO') THEN 1 ELSE 0 END, o.fecha_inicio DESC`);
+  if (conocido.recordset[0]) {
+    const c = await pool.request().input('c', sql.Int, conocido.recordset[0].contacto_id).input('o', sql.Int, conocido.recordset[0].oportunidad_id).input('chat', sql.VarChar, chatId).query(`
+      INSERT dbo.CONVERSACION (contacto_id, tipo_ventana, ventana_hasta, estado, canal_mensajeria, chat_id, oportunidad_id)
+      OUTPUT INSERTED.conversacion_id VALUES (@c, 'SERVICIO_24H', DATEADD(HOUR, 24, SYSDATETIME()), 'ABIERTA', 'WHATSAPP', @chat, @o)`);
+    publicar('conversacion', { conversacionId: c.recordset[0].conversacion_id, nueva: true });
+    return c.recordset[0].conversacion_id as number;
+  }
   const partes = (nombreVisible || '').trim().split(/\s+/).filter(Boolean);
   const r = await enTransaccion(pool, (tx) => crearEstudiante(tx, {
     nombres: partes[0] || 'Estudiante', apellidos: partes.slice(1).join(' ') || `WhatsApp ${numero.slice(-4)}`,
