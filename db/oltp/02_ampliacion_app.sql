@@ -204,3 +204,68 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CITA_ASESOR_INICIO')
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CONTACTO_NOMBRE')
     CREATE INDEX IX_CONTACTO_NOMBRE ON dbo.CONTACTO(apellidos, nombres);
 GO
+
+/*================================================================== DATOS BASE DE LA AMPLIACIÓN
+ Se cargan aquí (idempotente) para que existan con cualquier poblamiento, incluido el del informe.
+==================================================================*/
+SET NOCOUNT ON;
+GO
+/*------------------------------------------------------------------ Catalogo de objeciones */
+INSERT INTO dbo.CATALOGO_OBJECION (grupo, tipo, palabras_clave, respuesta_base, criterio_escalamiento, max_repeticiones, permite_descuento)
+SELECT v.grupo, v.tipo, v.claves, v.respuesta, v.criterio, v.maxrep, v.desc_ok
+FROM (VALUES
+    ('Precio', 'Precio alto',
+     N'caro|muy caro|precio alto|elevado|cuesta mucho|descuento|rebaja|más barato|mas barato',
+     N'Entiendo. El precio incluye las sesiones, las rondas de observaciones y los reportes de similitud indicados en la propuesta. Puedo revisar una versión con un ajuste dentro de las condiciones vigentes o un plan con menos sesiones.',
+     N'Si pide un descuento mayor al tope o un precio menor al mínimo, escalar (DESCUENTO_EXCEDE_TOPE).', 2, 1),
+    ('Presupuesto', 'Sin presupuesto por ahora',
+     N'no tengo dinero|no tengo plata|sin presupuesto|ahora no puedo pagar|más adelante|mas adelante|fin de mes',
+     N'Gracias por contármelo. Podemos dejar la propuesta vigente y, si te sirve, revisar un servicio por etapa (solo proyecto o solo informe) que tiene un monto menor.',
+     N'Si menciona dificultades de pago o pide fraccionar más allá de lo estándar, escalar a coordinación.', 2, 0),
+    ('Plazo', 'Plazo de entrega',
+     N'plazo|tiempo|muy lento|demora|urgente|no llego|fecha límite|fecha limite|rápido|rapido',
+     N'El cronograma se arma con tu fecha límite. Si es menor a 15 días aplica un recargo por urgencia que te muestro en la propuesta; si no, trabajamos con el plan estándar.',
+     N'Si la fecha límite es inviable para el alcance, escalar a un especialista.', 2, 0),
+    ('Confianza / garantías', 'Confianza y ética',
+     N'confianza|estafa|seguro|garantía|garantia|plagio|copia|ético|etico|me la hacen|hacer mi tesis',
+     N'Te acompañamos como asesores: tú eres el autor de tu tesis. Revisamos similitud con reporte y te entregamos observaciones y guía metodológica; no prometemos la aprobación del jurado.',
+     N'Si insiste en que se le redacte la tesis completa, explicar el límite ético y escalar a coordinación.', 2, 0),
+    ('Autonomía', 'Lo haré por mi cuenta',
+     N'lo haré solo|lo hare solo|yo solo|por mi cuenta|no necesito|puedo solo',
+     N'¡Me parece muy bien! Si te ayuda, el diagnóstico gratuito ya te deja una ruta clara. Y si más adelante quieres solo una revisión puntual, también la ofrecemos.',
+     NULL, 2, 0),
+    ('Competencia', 'Oferta de la competencia',
+     N'otra empresa|otro asesor|más barato en|mas barato en|me ofrecieron|competencia|otro lugar',
+     N'Es válido comparar. Te sugiero revisar qué incluye cada oferta: número de sesiones, rondas de observaciones, reporte de similitud y simulacros. Te detallo los nuestros para que compares con la misma base.',
+     N'Si pide igualar un precio externo por debajo del mínimo, escalar (DESCUENTO_EXCEDE_TOPE).', 2, 0),
+    ('Decisión de terceros', 'Consulta con familia o pareja',
+     N'mis papás|mis papas|mi mamá|mi mama|mi papá|mi papa|mi pareja|consultar|lo converso|lo pienso',
+     N'Claro, es una decisión importante. Te dejo el resumen de la propuesta para compartirlo; si quieres, podemos agendar una llamada corta con quien te apoya en la decisión.',
+     NULL, 2, 0),
+    ('Alcance', 'Entregables incluidos',
+     N'qué incluye|que incluye|incluye|entregables|alcance|cuántas sesiones|cuantas sesiones',
+     N'La propuesta detalla los entregables: sesiones, rondas de observaciones, reportes de similitud y simulacros. Si necesitas algo adicional, lo agrego como extra con su precio.',
+     N'Si pide entregables no catalogados, escalar (EXCEPCION_CONTRACTUAL).', 2, 0)
+) v(grupo, tipo, claves, respuesta, criterio, maxrep, desc_ok)
+WHERE NOT EXISTS (SELECT 1 FROM dbo.CATALOGO_OBJECION c WHERE c.grupo = v.grupo AND c.tipo = v.tipo);
+GO
+
+/*------------------------------------------------------------------ Transiciones permitidas (informe, tabla 6) */
+INSERT INTO dbo.TRANSICION_ESTADO_OPORTUNIDAD (estado_origen, estado_destino, evento)
+SELECT v.o, v.d, v.e
+FROM (VALUES
+    ('ABIERTA',           'EN_DIAGNOSTICO',    'DIAGNOSTICO_SOLICITADO'),
+    ('EN_DIAGNOSTICO',    'APTA_PARA_COTIZAR', 'APTITUD_VERIFICADA'),
+    ('APTA_PARA_COTIZAR', 'EN_NEGOCIACION',    'PRIMERA_PROPUESTA_PRESENTADA'),
+    ('EN_NEGOCIACION',    'ACEPTADA',          'ACEPTACION_EXPRESA'),
+    ('ACEPTADA',          'TRANSFERIDA',       'ACUERDO_TRANSFERIDO_A_PAYERS'),
+    ('TRANSFERIDA',       'PAYER_CONFIRMADO',  'CONFIRMACION_PAYERS'),
+    ('ABIERTA',           'DESCARTADA',        'DESCARTE'),
+    ('EN_DIAGNOSTICO',    'DESCARTADA',        'DESCARTE'),
+    ('APTA_PARA_COTIZAR', 'DESCARTADA',        'DESCARTE'),
+    ('EN_NEGOCIACION',    'DESCARTADA',        'DESCARTE'),
+    ('ACEPTADA',          'DESCARTADA',        'DESCARTE'),
+    ('TRANSFERIDA',       'DESCARTADA',        'DESCARTE')
+) v(o, d, e)
+WHERE NOT EXISTS (SELECT 1 FROM dbo.TRANSICION_ESTADO_OPORTUNIDAD t WHERE t.estado_origen = v.o AND t.estado_destino = v.d);
+GO

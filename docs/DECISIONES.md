@@ -92,3 +92,41 @@ Las cifras del informe (Tabla 24 y tablas 25–33) son **datos de prueba**. La f
 Las 10 medidas coinciden en ambos cortes y se cumplen las 5 reglas de subconjunto. El ETL del Anexo C carga el data mart de forma consistente con el OLTP. Después de la prueba se restauraron las bases al estado limpio que espera `db:init`.
 
 **Auditoría R4.1 (dato de prueba, no es un defecto):** con ese poblamiento, la consulta de citas solapadas devuelve 1 caso (asesor 2, citas 6 y 11, 22/01/2026 10:00–10:45, en estado REALIZADA y NO_ASISTIO). La auditoría funciona como se espera: detecta lo que hay en los datos. En la app, la tool `agendar_cita` impide crear solapamientos nuevos.
+
+## 9. Rendimiento del ETL: `OPTION (FORCE ORDER)` en los tres hechos (cambio en `04_ETL.sql`)
+
+**Problema detectado al ejecutar:** con apenas 229 oportunidades, el ETL del Anexo C tardaba entre 8 y 35 s y el tiempo variaba entre ejecuciones. Al medir por sentencia se vio que las dimensiones tardan milisegundos y los hechos B.1–B.3 segundos. El plan real de B.3 mostró un `Table Spool` ejecutado 52 288 veces, que generaba 12,9 millones de filas: el optimizador combinaba las dimensiones entre sí **antes** de unir `PERFIL_ACADEMICO`. La causa es que las condiciones `de.idContacto = ISNULL(pf.contacto_id, 0)` dependen de un `LEFT JOIN`, y con ellas el optimizador estima mal cuántas filas habrá. Agregar índices o `OPTION (RECOMPILE)` lo empeoraba.
+
+**Corrección:** se agregó `OPTION (FORCE ORDER)` al final de los tres `INSERT … SELECT` de hechos. El `FROM` del Anexo C ya estaba escrito en el orden correcto (primero las tablas del OLTP, después las dimensiones), y la sugerencia solo obliga al optimizador a respetarlo. **No cambia qué filas se cargan ni sus sumas**: la verificación OLTP ↔ data mart da los mismos valores.
+
+| Medición (mismos datos) | Antes | Después |
+|---|---|---|
+| B.1 · B.2 · B.3 (sqlcmd) | 1,5 s · 0,03–26 s · 7,7 s | 0,02 s · 0,03–0,07 s · 0,01–0,03 s |
+| ETL completo desde la app | 9–35 s | 0,2–1,5 s |
+
+Se recomienda incorporar el cambio al Anexo C del informe.
+
+## 10. Generador de datos sintéticos (`npm run seed`)
+
+- **Determinista:** semilla fija (`20260511`) y ventana de fechas fija (01/05/2026 – 10/11/2026), así que todas las ejecuciones producen los mismos datos. Se comprobó regenerando todo: las 10 medidas fueron idénticas.
+- **Volumen:** 260 contactos/BUYERS, 212 LEADS y 229 oportunidades (algunos leads descartados reabren un segundo ciclo meses después).
+- **Coherencia:** cada oportunidad se crea `ABIERTA` y avanza con `UPDATE` por cada transición, así que el trigger de transiciones valida también los datos sintéticos. Las fechas son siempre consecutivas, y precios, topes y mínimos se calculan con el mismo motor que usará el agente (`src/negocio/precios.ts`).
+- **Variedad sin forzar cifras:** probabilidades distintas por canal, asesor, servicio y grupo de objeción (constantes en `src/seed/generar.ts`, documentadas como supuestos de simulación). No se fija ningún valor de indicador.
+- **Marcado:** `es_demo = 1` en `CONTACTO` y `OPORTUNIDAD_COMERCIAL`. `npm run seed:reset` borra solo esos datos, conserva los creados en la demo en vivo y vacía el data mart, que el siguiente ETL reconstruye. Así no quedan miembros huérfanos en `Dim_Estudiante`, ya que el `MERGE` del Anexo C solo inserta.
+- Datos 100 % ficticios: combinaciones aleatorias de nombres, teléfonos `519XXXXXXXX` inventados y correos `@correo.demo`.
+
+## 11. ETL desde la app y la CLI
+
+- La app ejecuta **el mismo archivo** `db/etl/04_ETL.sql` (fuente única). Solo le quita el `USE` y los `DECLARE` de `@Corte/@WD/@WQ/@WA/@WC`, y los pasa como parámetros reales (`sp_executesql`). Si el archivo deja de declarar alguno, la app se niega a ejecutarlo.
+- Todo el lote corre en **una transacción**: si algo falla se revierte completo y el tablero nunca ve los hechos a medio cargar. Cada ejecución queda registrada en `ETL_EJECUCION` (parámetros, duración, filas por tabla, oportunidades sintéticas y reales).
+- El script usa **un solo plazo `@WA`** para la aceptación y la recuperación de objeciones. El prompt enumeraba cinco plazos («48 h, 2 h, 30 d, 30 d, 60 d»), pero se respetan los cuatro parámetros del Anexo C.
+- `npm run etl:verify` ejecuta `06_verificacion_oltp_mart.sql` con los parámetros de la **última carga correcta**.
+- `npm run db:informe` recrea las bases con los datos de prueba del informe. `db:init` detecta ese escenario (por la universidad «Universidad Nacional Demo 1») y no le aplica los catálogos de la app. El catálogo de objeciones y las transiciones se cargan en `02_ampliacion_app.sql`, porque deben existir en cualquier escenario.
+
+## 12. Pruebas automáticas (`npm test`)
+
+15 pruebas con `node:test`:
+- **Unitarias:** motor de precios (fórmula, tope, mínimo, recargos) e indicadores (cociente de sumas frente a promedio de porcentajes, «Sin datos», umbrales del semáforo, nombres sin códigos internos).
+- **Integración con SQL Server:** ETL más verificación OLTP ↔ data mart, idempotencia del ETL, rechazo de transiciones no permitidas, `CK_PROPUESTA_TOPE` y `CK_PROPUESTA_MINIMO`, y unicidad de `idempotency_key`.
+
+Las pruebas de integración usan transacciones revertidas, se omiten con aviso si no hay conexión y al terminar restauran el data mart con los parámetros de la carga anterior.

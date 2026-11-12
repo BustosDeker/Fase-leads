@@ -53,10 +53,16 @@ Instala `mssql-server` según la guía oficial de Microsoft y ejecuta `sudo /opt
 
 | Comando | Qué hace |
 |---|---|
-| `npm run setup` | Verifica Node, crea `.env`, instala dependencias y OpenWA, compila el frontend y ejecuta `db:init`. |
+| `npm run setup` | Verifica Node, crea `.env`, instala dependencias y OpenWA, compila el frontend, ejecuta `db:init`, genera los datos de prueba y hace la primera carga del data mart. |
 | `npm start` | Levanta la app (puerto `PORT`, 3100 por defecto) y OpenWA (2785), y abre el navegador. |
 | `npm run db:init` | Crea `INBESTIGA_TESIS` e `INBESTIGA_MART` si no existen, aplica la ampliación de la app, carga los catálogos y crea el usuario `inbestiga_app`. Es idempotente. |
-| `npm run db:reset` | **Borra y recrea** ambas bases. |
+| `npm run db:reset` | **Borra y recrea** ambas bases (vacías, con catálogos). |
+| `npm run db:informe` | **Borra y recrea** ambas bases con los datos de prueba del informe (luego: `npm run etl -- --corte=2026-04-30T23:59:59`). |
+| `npm run seed` | Genera los datos sintéticos deterministas (si aún no existen). |
+| `npm run seed:reset` | Borra solo los datos sintéticos (`es_demo = 1`), vacía el data mart y los vuelve a generar. |
+| `npm run etl` | Carga el data mart (dimensiones con `MERGE`, hechos con limpieza total). Opciones: `-- --corte=AAAA-MM-DDTHH:MM:SS --wd=48 --wq=2 --wa=30 --wc=60`. |
+| `npm run etl:verify` | Verificación interna: recalcula M1–M10 desde el OLTP y los compara con el data mart (no es pantalla de la app). |
+| `npm test` | Pruebas automáticas (unitarias y de integración con SQL Server). |
 
 ## Estructura
 
@@ -65,9 +71,11 @@ db/oltp/      01_OLTP_ER.sql (DDL v2 + Anexo A) · 02_ampliacion_app.sql · 03_c
               simulacion_informe/02_OLTP_Poblamiento_LEADS.sql (escenario del informe)
 db/dm/        03_DataMart_DDL.sql (Anexo B) · 03b_ampliacion_app.sql (bitácora del ETL)
 db/etl/       04_ETL.sql (Anexo C)
-db/reports/   05_Conciliacion_Reportes.sql (Anexo D)
+db/reports/   05_Conciliacion_Reportes.sql (Anexo D) · 06_verificacion_oltp_mart.sql (verificación interna)
 scripts/      setup.js · start.js · db-init.js · lib/sql-runner.js (ejecuta .sql partiendo por GO)
-src/          config.js · server/ (Fastify) · … (agente, llm, whatsapp, etl, web: etapas siguientes)
+src/          config.js · db.ts · server/ (Fastify) · etl/ (ejecutar, verificar, CLI) · seed/ (generador determinista)
+              negocio/precios.ts (motor de precios) · shared/indicadores.ts (KPI, umbrales, semáforo)
+tests/        pruebas node:test (unitarias e integración)
 docs/         DECISIONES.md · informe/
 vendor/       OpenWA (lo clona setup; no se versiona)
 ```
@@ -77,7 +85,7 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 | Etapa | Estado |
 |---|---|
 | E1 · Base: repo, setup, conexión, `db:init` | ✅ (ver «Pendiente / Limitaciones») |
-| E2 · Seed + ETL + `etl:verify` | pendiente |
+| E2 · Seed + ETL + `etl:verify` | ✅ |
 | E3 · Tablero BI | pendiente |
 | E4 · Ficha nominal, pipeline, cotizador, agenda, objeciones | pendiente |
 | E5 · Agente Negociador | pendiente |
@@ -96,6 +104,7 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 
 ## Pendiente / Limitaciones
 
-- **Verificación de E1 en esta máquina:** los cinco scripts SQL (DDL del OLTP, ampliación de la app, catálogos, DDL del data mart y su ampliación) se ejecutaron sin errores con `sqlcmd` por memoria compartida, y se volvieron a ejecutar para comprobar la idempotencia. `npm run db:init` desde Node **queda pendiente** hasta habilitar TCP/IP y completar `DB_ADMIN_PASSWORD`.
+- Verificado en Windows 11 con SQL Server 2022 Developer y Node 22.16. **Linux y macOS no se han probado todavía**: los scripts son Node puro, pero falta ejecutarlos allí.
+- El tablero solo ve lo que cargó el último ETL. Las oportunidades nuevas de la demo aparecen al pulsar «Ejecutar ETL».
 - OpenWA usa WhatsApp Web, una **API no oficial**: el número puede quedar restringido. Usa un número dedicado para la demo. El plan B es el Simulador de WhatsApp de la app.
 - Los precios, topes, plazos y umbrales son **valores de prueba** pendientes de validación por la gestión del negocio (como indica el informe).

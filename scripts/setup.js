@@ -114,8 +114,12 @@ if (fs.existsSync(path.join(RAIZ, 'src', 'web', 'index.html'))) {
 // 6. SQL Server -------------------------------------------------------------
 titulo('6/6 SQL Server');
 if (leerVar('DB_ADMIN_PASSWORD')) {
-  if (ejecutar('node', ['scripts/db-init.js'])) ok('bases de datos listas');
-  else aviso('db:init no terminó: revisa el mensaje anterior (TCP/IP, credenciales).');
+  if (ejecutar('node', ['scripts/db-init.js'])) {
+    ok('bases de datos listas');
+    // Datos sintéticos (solo si aún no existen: el seed es idempotente) y primera carga del data mart.
+    if (ejecutar('npm', ['run', '-s', 'seed']) && ejecutar('npm', ['run', '-s', 'etl'])) ok('datos de prueba cargados y data mart poblado');
+    else aviso('El seed o el ETL no terminaron: revisa el mensaje anterior.');
+  } else aviso('db:init no terminó: revisa el mensaje anterior (TCP/IP, credenciales).');
 } else {
   ok('se omite db:init hasta que completes DB_ADMIN_PASSWORD');
 }

@@ -151,7 +151,8 @@ FROM dx x
      INNER JOIN INBESTIGA_MART.dbo.Dim_Canal_Captacion dc
             ON dc.idCanal = ISNULL(b.canal_captacion_id, 0) AND dc.idCampania = ISNULL(b.campania_id, 0)
 WHERE x.rn = 1
-GROUP BY dt.KeyTiempo, de.KeyEstudiante, du.KeyUbicacion, di.KeyInvestigacion, da.KeyAsesor, dc.KeyCanalCaptacion;
+GROUP BY dt.KeyTiempo, de.KeyEstudiante, du.KeyUbicacion, di.KeyInvestigacion, da.KeyAsesor, dc.KeyCanalCaptacion
+OPTION (FORCE ORDER);   -- rendimiento: une primero el OLTP y luego las dimensiones (ver docs/DECISIONES.md §9)
 -- B.2 Hecho_Oportunidad (AD2): parte de TODAS las oportunidades; las versiones no multiplican filas
 DELETE FROM INBESTIGA_MART.dbo.Hecho_Oportunidad;
 WITH fp AS (   -- primera propuesta presentada de cada oportunidad
@@ -210,7 +211,8 @@ FROM OPORTUNIDAD_COMERCIAL o
      INNER JOIN INBESTIGA_MART.dbo.Dim_Asesor da     ON da.idAsesor = ISNULL(o.asesor_responsable_id, 0)
      INNER JOIN INBESTIGA_MART.dbo.Dim_Canal_Captacion dc
             ON dc.idCanal = ISNULL(b.canal_captacion_id, 0) AND dc.idCampania = ISNULL(b.campania_id, 0)
-GROUP BY t1.KeyTiempo, t2.KeyTiempo, t3.KeyTiempo, de.KeyEstudiante, du.KeyUbicacion, di.KeyInvestigacion, ds.KeyServicio, da.KeyAsesor, dc.KeyCanalCaptacion;
+GROUP BY t1.KeyTiempo, t2.KeyTiempo, t3.KeyTiempo, de.KeyEstudiante, du.KeyUbicacion, di.KeyInvestigacion, ds.KeyServicio, da.KeyAsesor, dc.KeyCanalCaptacion
+OPTION (FORCE ORDER);   -- rendimiento: une primero el OLTP y luego las dimensiones (ver docs/DECISIONES.md §9)
 -- B.3 Hecho_Recuperacion_Objecion (AD3): primera objeción por oportunidad, con su diagnóstico de referencia
 DELETE FROM INBESTIGA_MART.dbo.Hecho_Recuperacion_Objecion;
 WITH ob AS (   -- la recuperación se evalúa por objeción antes de agregar (no se agrega una subconsulta)
@@ -259,4 +261,5 @@ FROM ob x
             ON dc.idCanal = ISNULL(b.canal_captacion_id, 0) AND dc.idCampania = ISNULL(b.campania_id, 0)
      INNER JOIN INBESTIGA_MART.dbo.Dim_Objecion dob  ON dob.idObjecion = ISNULL(x.grupo, 'SIN GRUPO') + '/' + x.tipo
 WHERE x.rn = 1
-GROUP BY dt.KeyTiempo, de.KeyEstudiante, du.KeyUbicacion, di.KeyInvestigacion, ds.KeyServicio, da.KeyAsesor, dc.KeyCanalCaptacion, dob.KeyObjecion;
+GROUP BY dt.KeyTiempo, de.KeyEstudiante, du.KeyUbicacion, di.KeyInvestigacion, ds.KeyServicio, da.KeyAsesor, dc.KeyCanalCaptacion, dob.KeyObjecion
+OPTION (FORCE ORDER);   -- rendimiento: une primero el OLTP y luego las dimensiones (ver docs/DECISIONES.md §9)

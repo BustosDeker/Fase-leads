@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// npm run db:init  [-- --reset]
+// npm run db:init  [-- --reset]     ·  npm run db:informe (recrea y carga los datos de prueba del informe)
 // Crea (si no existen) INBESTIGA_TESIS (OLTP) e INBESTIGA_MART (data mart), aplica la
 // ampliación de la app, carga los catálogos y crea el usuario SQL de mínimos privilegios.
 // Es idempotente: sin --reset no borra datos. Usa DB_ADMIN_USER (sa) solo aquí.
@@ -9,13 +9,17 @@ import { config, configMssql, RAIZ, BD_OLTP, BD_MART } from '../src/config.js';
 import { abrirConexionScript, ejecutarArchivo } from './lib/sql-runner.js';
 import { explicarErrorSql } from '../src/diagnostico-sql.js';
 
-const RESET = process.argv.includes('--reset');
+// --informe: recrea ambas bases y carga simulacion_informe/02_OLTP_Poblamiento_LEADS.sql (datos de
+// prueba del informe, con sus propios catálogos de IDs fijos) en lugar de 03_catalogos.sql.
+const INFORME = process.argv.includes('--informe');
+const RESET = INFORME || process.argv.includes('--reset');
 const ruta = (...p) => path.join(RAIZ, 'db', ...p);
 
 const ARCHIVOS = {
   oltpBase: ruta('oltp', '01_OLTP_ER.sql'),          // DDL v2 (59 tablas) + Anexo A
   oltpApp: ruta('oltp', '02_ampliacion_app.sql'),     // ampliación de la app (idempotente)
   catalogos: ruta('oltp', '03_catalogos.sql'),        // catálogos (idempotente)
+  informe: ruta('oltp', 'simulacion_informe', '02_OLTP_Poblamiento_LEADS.sql'), // datos de prueba del informe
   martBase: ruta('dm', '03_DataMart_DDL.sql'),        // Anexo B: 8 dimensiones + 3 hechos
   martApp: ruta('dm', '03b_ampliacion_app.sql'),      // bitácora del ETL (idempotente)
 };
@@ -89,13 +93,22 @@ async function main() {
   if (recrearOltp) {
     const n = await ejecutarArchivo(pool, ARCHIVOS.oltpBase);
     ok(`01_OLTP_ER.sql ejecutado (${n} lotes): DDL v2 + ampliación de LEADS (Anexo A)`);
+    if (INFORME) {
+      await ejecutarArchivo(pool, ARCHIVOS.informe);
+      ok('02_OLTP_Poblamiento_LEADS.sql cargado (datos de prueba del informe)');
+    }
   } else {
     ok('ya existe: se conserva (usa --reset para recrearla)');
   }
   await ejecutarArchivo(pool, ARCHIVOS.oltpApp);
   ok('02_ampliacion_app.sql aplicado (idempotente)');
-  await ejecutarArchivo(pool, ARCHIVOS.catalogos);
-  ok('03_catalogos.sql aplicado (idempotente)');
+  // El escenario del informe trae catálogos propios con IDs fijos: no se mezclan con los de la app.
+  const esInforme = INFORME || (await pool.request().query(
+    `SELECT COUNT(*) AS n FROM [${BD_OLTP}].dbo.UNIVERSIDAD WHERE nombre = N'Universidad Nacional Demo 1'`)).recordset[0].n > 0;
+  if (!esInforme) {
+    await ejecutarArchivo(pool, ARCHIVOS.catalogos);
+    ok('03_catalogos.sql aplicado (idempotente)');
+  } else ok('03_catalogos.sql omitido: el escenario del informe trae sus propios catálogos');
 
   // --- Data mart ----------------------------------------------------------
   paso(`Data mart ${BD_MART}`);
@@ -131,7 +144,8 @@ async function main() {
            (SELECT COUNT(*) FROM [${BD_OLTP}].dbo.REGLA_PRECIO)      AS reglas_precio,
            (SELECT COUNT(*) FROM [${BD_OLTP}].dbo.ENTREGABLE)        AS entregables,
            (SELECT COUNT(*) FROM [${BD_OLTP}].dbo.CATALOGO_OBJECION) AS tipos_objecion,
-           (SELECT COUNT(*) FROM [${BD_OLTP}].dbo.TRANSICION_ESTADO_OPORTUNIDAD) AS transiciones`);
+           (SELECT COUNT(*) FROM [${BD_OLTP}].dbo.TRANSICION_ESTADO_OPORTUNIDAD) AS transiciones,
+           (SELECT COUNT(*) FROM [${BD_OLTP}].dbo.OPORTUNIDAD_COMERCIAL)        AS oportunidades`);
   ok(`${BD_OLTP}: ${tOltp} tablas`);
   ok(`${BD_MART}: ${tMart} tablas`);
   ok('catálogos: ' + Object.entries(cat.recordset[0]).map(([k, n]) => `${k}=${n}`).join(', '));

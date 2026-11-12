@@ -13,7 +13,13 @@
     "server": "tsx src/server/index.ts",
     "db:init": "node scripts/db-init.js",
     "db:reset": "node scripts/db-init.js --reset",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "etl": "tsx src/etl/cli.ts",
+    "etl:verify": "tsx src/etl/cli.ts --verificar",
+    "seed": "tsx src/seed/cli.ts",
+    "seed:reset": "tsx src/seed/cli.ts --reset",
+    "test": "node --import tsx --test \"tests/*.test.ts\"",
+    "db:informe": "node scripts/db-init.js --informe"
   },
   "dependencies": {
     "dotenv": "16.4.7",
