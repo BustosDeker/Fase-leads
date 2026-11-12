@@ -14,7 +14,7 @@ const PASOS: { t: string; a: string; d: string }[] = [
   { t: 'PAYERS', a: '/fase/payers', d: '«Simular confirmación»: la oportunidad pasa a «Confirmada por PAYERS» (idempotente por evento).' },
   { t: 'Recargar el data mart', a: '/leads/tablero', d: '«Ejecutar ETL» (administrador) y observa cómo cambian los indicadores.' },
   { t: 'Evidencias', a: '/evidencias', d: 'Data mart = OLTP en las 10 medidas, permisos mínimos de la app, reglas en la base de datos y pruebas automáticas.' },
-  { t: 'WhatsApp real (opcional)', a: '/leads/conversaciones', d: 'Panel WhatsApp → «Conectar WhatsApp» → escanea el QR. Desde un número de WHATSAPP_ALLOWLIST escribe la frase de activación.' },
+  { t: 'WhatsApp real (opcional)', a: '/leads/conversaciones', d: 'Panel WhatsApp → «Conectar WhatsApp» → escanea el QR. Busca un lead con consentimiento vigente, activa «Habilitar WhatsApp» e inicia la conversación.' },
 ];
 
 const CLAVE = 'demo-pasos';

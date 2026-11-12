@@ -95,7 +95,8 @@ export function Aviso({ tipo = 'error', children }: { tipo?: 'error' | 'ok' | 'i
 }
 
 export interface ResultadoBusqueda { lead_id: number; buyer_id: number; contacto_id: number; nombres: string; apellidos: string;
-  whatsapp: string | null; es_demo: boolean; carrera: string | null; estado: string | null }
+  whatsapp: string | null; whatsapp_habilitado: boolean; consentimiento_contacto: boolean; no_contactar: boolean;
+  es_demo: boolean; carrera: string | null; estado: string | null }
 
 /** Buscador por nombre o identificador con autocompletado. */
 export function BuscadorLead({ alElegir, placeholder = 'Nombre, WhatsApp o identificador…' }: { alElegir: (r: ResultadoBusqueda) => void; placeholder?: string }) {

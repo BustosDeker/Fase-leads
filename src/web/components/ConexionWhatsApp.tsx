@@ -6,7 +6,7 @@ import { useLiveEvents } from '../hooks/useLiveEvents';
 import { Aviso, Chip } from './ui';
 
 interface EstadoWA { estado: string; telefono: string | null; nombre: string | null; detalle: string | null; sesion: string;
-  numerosPermitidos: number; fraseActivacion: string; webhookListo: boolean; qr?: string | null; errorEnvio?: string }
+  webhookListo: boolean; qr?: string | null; errorEnvio?: string }
 
 const ETIQUETA: Record<string, [string, 'bueno' | 'regular' | 'malo' | 'apagado']> = {
   CONECTADO: ['● Conectado', 'bueno'], ESPERANDO_QR: ['▲ Esperando que escanees el QR', 'regular'], CONECTANDO: ['▲ Conectando…', 'regular'],
@@ -58,9 +58,8 @@ export function ConexionWhatsApp() {
           <ul className="flex flex-col gap-1.5 text-sm text-tinta-2">
             {d.detalle && <li>ⓘ {d.detalle}</li>}
             {d.errorEnvio && <li className="text-malo-texto">■ Último envío fallido: {d.errorEnvio}</li>}
-            <li>• El agente responde solo a <strong>{d.numerosPermitidos}</strong> número(s) de la lista permitida (WHATSAPP_ALLOWLIST en .env).
-              {d.numerosPermitidos === 0 && <span className="text-regular-texto"> ▲ La lista está vacía: agrega tu número (con 51, sin +) y reinicia.</span>}</li>
-            <li>• La primera vez, el estudiante debe escribir: «{d.fraseActivacion}». El agente nunca escribe primero.</li>
+            <li>• Para hablar con un lead, selecciónalo en esta pantalla y activa «Habilitar WhatsApp». Se requiere consentimiento vigente y un número válido.</li>
+            <li>• El primer mensaje del agente se envía desde «Iniciar conversación»; los mensajes entrantes de leads habilitados también reciben respuesta.</li>
             <li>• Se ignoran grupos, estados, mensajes propios y mensajes de hace más de 10 minutos.</li>
             <li>• Webhook firmado: {d.webhookListo ? '● registrado' : '– pendiente'} · sesión «{d.sesion}».</li>
             <li>• OpenWA usa WhatsApp Web (API no oficial): usa un número dedicado para la demo.</li>

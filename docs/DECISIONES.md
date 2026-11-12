@@ -157,7 +157,7 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - **OpenWA va como proceso aparte** (`vendor/OpenWA`, compilado en `npm run setup`, arrancado por `npm start`). La app solo usa su API HTTP: sesión, QR, envío de texto y webhooks.
 - **Webhook a `localhost`.** OpenWA bloquea por defecto los webhooks a direcciones internas (protección SSRF). `setup` agrega `SSRF_ALLOWED_HOSTS=localhost` a `vendor/OpenWA/.env`: la excepción es solo para `localhost` y la protección sigue activa para el resto.
 - **Firma.** La app recrea el webhook al arrancar con el secreto de `.env` (OpenWA no permite leer el secreto guardado) y verifica `X-OpenWA-Signature` con comparación de tiempo constante sobre el cuerpo crudo.
-- **Quién puede hablar con el agente.** Solo números de `WHATSAPP_ALLOWLIST` (lista vacía = nadie). La primera conversación de un número empieza solo con la frase de activación. Con `RESOLVE_LID_TO_PHONE=true` OpenWA agrega el número real cuando WhatsApp oculta el remitente tras un id de privacidad.
+- **Quién puede hablar con el agente.** Solo leads con un número válido, consentimiento vigente y `CONTACTO.whatsapp_habilitado = 1`, activado desde Conversaciones. `WHATSAPP_ALLOWLIST` ya no limita el uso por contacto. Con `RESOLVE_LID_TO_PHONE=true` OpenWA agrega el número real cuando WhatsApp oculta el remitente tras un id de privacidad.
 - **Respuesta rápida al webhook.** La app responde 200 de inmediato y procesa el turno en segundo plano (OpenWA espera como máximo 10 s y la IA puede tardar más).
 - **Sin ciclos con la UI.** El estado de WhatsApp se publica por SSE solo cuando cambia, y la sincronización con OpenWA se hace como máximo cada 10 s (un primer diseño provocaba un ciclo evento → consulta → evento y OpenWA respondía 429).
 
@@ -166,7 +166,8 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - **Contratos mínimos y con token.** `POST /api/buyers` y `POST /api/payers/confirmacion` exigen `Authorization: Bearer` con su propio token (`BUYERS_TOKEN`, `PAYERS_TOKEN`, generados por `setup`), comparado en tiempo constante. Los simuladores de las pantallas usan la misma lógica por una ruta interna, sin exponer los tokens al navegador.
 - **Idempotencia.** BUYERS se deduplica por número de WhatsApp; la transferencia, por `leads-op<id>-v<versión>`; la confirmación de PAYERS, por `event_id` (`CONVERSION_PAYER_REF.event_id` es único).
 - **Transferencia automática al aceptar.** La regla del informe (aceptación expresa → acuerdo transferido) se aplica en cuanto el agente registra la aceptación. Si falla, la oportunidad queda «Aceptada» y se puede transferir desde la pantalla PAYERS.
-- **Leads de BUYERS en WhatsApp.** Si un número ya es lead, su primer mensaje abre la conversación sobre su oportunidad vigente, sin pedir de nuevo la frase de activación ni el consentimiento.
+- **Leads de BUYERS en WhatsApp.** Su conversación solo se procesa después de habilitar WhatsApp desde la aplicación y verificar consentimiento vigente; la primera respuesta puede iniciar el hilo del lead existente.
+- **Eliminación de leads.** La ficha permite solicitar su eliminación con confirmación y limpia sus datos relacionados en una transacción. Se bloquea cuando hay PAYER, órdenes de pago u honorarios para preservar registros financieros.
 - **Sin datos de pago en LEADS.** Solo se guarda la referencia de la confirmación (evento, fecha y orden de pago opcional), como pide el informe.
 
 ## 17. Ingreso con roles y evidencias (E8)

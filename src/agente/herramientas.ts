@@ -81,7 +81,7 @@ export const HERRAMIENTAS = {
       await enTransaccion(await oltp(), async (tx) => {
         await new sql.Request(tx).input('c', sql.Int, cx.contactoId).input('a', sql.Bit, e.acepta).query(e.acepta
           ? `UPDATE dbo.CONTACTO SET consentimiento_contacto = 1, fecha_consentimiento = SYSDATETIME(), no_contactar = 0, fecha_revocacion = NULL, estado = 'ACTIVO' WHERE contacto_id = @c`
-          : `UPDATE dbo.CONTACTO SET consentimiento_contacto = 0, no_contactar = 1, fecha_revocacion = SYSDATETIME() WHERE contacto_id = @c`);
+          : `UPDATE dbo.CONTACTO SET consentimiento_contacto = 0, no_contactar = 1, whatsapp_habilitado = 0, fecha_revocacion = SYSDATETIME() WHERE contacto_id = @c`);
         await new sql.Request(tx).input('c', sql.Int, cx.contactoId).input('ac', sql.VarChar, e.acepta ? 'OTORGA' : 'REVOCA').input('m', sql.VarChar, medio(cx))
           .input('f', sql.NVarChar, 'Atención comercial de asesoría de tesis por WhatsApp').input('ev', sql.NVarChar, e.frase_del_estudiante.slice(0, 300))
           .query('INSERT dbo.CONSENTIMIENTO_HISTORIAL (contacto_id, accion, medio, finalidad, evidencia) VALUES (@c, @ac, @m, @f, @ev)');

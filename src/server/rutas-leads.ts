@@ -62,10 +62,106 @@ export function rutasLeads(app: FastifyInstance) {
       await new sql.Request(tx).input('c', sql.Int, contactoId).input('n', sql.VarChar(100), datos.nombres)
         .input('a', sql.VarChar(100), datos.apellidos).input('w', sql.VarChar(20), datos.whatsapp || null)
         .input('e', sql.VarChar(150), datos.correo).query(`
-          UPDATE dbo.CONTACTO SET nombres = @n, apellidos = @a, whatsapp = @w, correo = @e
+          UPDATE dbo.CONTACTO SET nombres = @n, apellidos = @a,
+            whatsapp_habilitado = CASE WHEN whatsapp = @w THEN whatsapp_habilitado ELSE 0 END,
+            whatsapp = @w, correo = @e
           WHERE contacto_id = @c`);
     });
     publicar('oltp', { tipo: 'contacto', leadId });
+    return { ok: true };
+  });
+  app.post('/api/leads/:leadId/whatsapp', async (req) => {
+    const { leadId } = z.object({ leadId: id }).parse(req.params);
+    const { habilitado } = z.object({ habilitado: z.boolean() }).parse(req.body);
+    await enTransaccion(await oltp(), async (tx) => {
+      const contacto = await new sql.Request(tx).input('l', sql.Int, leadId).query(`
+        SELECT c.contacto_id, c.whatsapp, c.consentimiento_contacto, c.no_contactar
+        FROM dbo.LEAD l WITH (UPDLOCK, HOLDLOCK) JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id
+        JOIN dbo.CONTACTO c WITH (UPDLOCK, HOLDLOCK) ON c.contacto_id = b.contacto_id WHERE l.lead_id = @l`);
+      const c = contacto.recordset[0];
+      if (!c) throw new ErrorNegocio('No existe ese lead.', 404);
+      const numero = String(c.whatsapp ?? '').replace(/\D/g, '');
+      if (habilitado && (numero.length < 9 || numero.length > 15))
+        throw new ErrorNegocio('Registra un número de WhatsApp válido, con código de país.', 409);
+      if (habilitado && (!c.consentimiento_contacto || c.no_contactar))
+        throw new ErrorNegocio('Solo puedes habilitar WhatsApp si el contacto tiene consentimiento vigente.', 409);
+      await new sql.Request(tx).input('c', sql.Int, c.contacto_id).input('h', sql.Bit, habilitado)
+        .query('UPDATE dbo.CONTACTO SET whatsapp_habilitado = @h WHERE contacto_id = @c');
+    });
+    publicar('oltp', { tipo: 'whatsapp_contacto', leadId });
+    return { ok: true, habilitado };
+  });
+  app.delete('/api/leads/:leadId', async (req) => {
+    const { leadId } = z.object({ leadId: id }).parse(req.params);
+    await enTransaccion(await oltp(), async (tx) => {
+      const existe = await new sql.Request(tx).input('l', sql.Int, leadId).query(`
+        SELECT c.contacto_id, b.buyer_id,
+          CASE WHEN EXISTS (SELECT 1 FROM dbo.PAYER p WHERE p.lead_id = l.lead_id)
+                 OR EXISTS (SELECT 1 FROM dbo.HONORARIO h WHERE h.lead_id = l.lead_id
+                            OR EXISTS (SELECT 1 FROM dbo.DIAGNOSTICO d WHERE d.lead_id = l.lead_id AND d.diagnostico_id = h.diagnostico_id))
+                 OR EXISTS (SELECT 1 FROM dbo.ORDEN_PAGO op JOIN dbo.PROPUESTA pr ON pr.propuesta_id = op.propuesta_id
+                            WHERE pr.lead_id = l.lead_id)
+               THEN 1 ELSE 0 END AS tiene_registros_financieros
+        FROM dbo.LEAD l WITH (UPDLOCK, HOLDLOCK) JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id
+        JOIN dbo.CONTACTO c ON c.contacto_id = b.contacto_id WHERE l.lead_id = @l`);
+      const row = existe.recordset[0];
+      if (!row) throw new ErrorNegocio('No existe ese lead.', 404);
+      if (row.tiene_registros_financieros)
+        throw new ErrorNegocio('No se puede eliminar este lead porque tiene registros de pago o honorarios. Conserva su historial financiero.', 409);
+
+      await new sql.Request(tx).input('l', sql.Int, leadId).query(`
+        DECLARE @contacto INT, @buyer INT;
+        SELECT @contacto = b.contacto_id, @buyer = l.buyer_id FROM dbo.LEAD l
+          JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id WHERE l.lead_id = @l;
+        DECLARE @oportunidades TABLE (id INT PRIMARY KEY);
+        INSERT @oportunidades SELECT oportunidad_id FROM dbo.OPORTUNIDAD_COMERCIAL WHERE lead_id = @l;
+        DECLARE @conversaciones TABLE (id INT PRIMARY KEY);
+        INSERT @conversaciones SELECT conversacion_id FROM dbo.CONVERSACION WHERE contacto_id = @contacto;
+        DECLARE @mensajes TABLE (id INT PRIMARY KEY);
+        INSERT @mensajes SELECT mensaje_id FROM dbo.MENSAJE WHERE conversacion_id IN (SELECT id FROM @conversaciones);
+        DECLARE @diagnosticos TABLE (id INT PRIMARY KEY);
+        INSERT @diagnosticos SELECT diagnostico_id FROM dbo.DIAGNOSTICO WHERE lead_id = @l;
+        DECLARE @propuestas TABLE (id INT PRIMARY KEY);
+        INSERT @propuestas SELECT propuesta_id FROM dbo.PROPUESTA WHERE lead_id = @l;
+        DECLARE @citas TABLE (id INT PRIMARY KEY);
+        INSERT @citas SELECT cita_id FROM dbo.CITA_VIRTUAL WHERE oportunidad_id IN (SELECT id FROM @oportunidades);
+
+        DELETE FROM dbo.AGENTE_TURNO WHERE conversacion_id IN (SELECT id FROM @conversaciones)
+          OR oportunidad_id IN (SELECT id FROM @oportunidades)
+          OR mensaje_entrada_id IN (SELECT id FROM @mensajes)
+          OR mensaje_salida_id IN (SELECT id FROM @mensajes);
+        DELETE FROM dbo.MENSAJE WHERE conversacion_id IN (SELECT id FROM @conversaciones);
+        DELETE FROM dbo.ESCALAMIENTO WHERE lead_id = @l OR conversacion_id IN (SELECT id FROM @conversaciones)
+          OR oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.CITA_HISTORIAL WHERE cita_id IN (SELECT id FROM @citas);
+        DELETE FROM dbo.CITA_VIRTUAL WHERE oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.TRANSFERENCIA_PAYER WHERE oportunidad_id IN (SELECT id FROM @oportunidades)
+          OR propuesta_id IN (SELECT id FROM @propuestas);
+        DELETE FROM dbo.CONVERSION_PAYER_REF WHERE oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.CONTRATO WHERE propuesta_id IN (SELECT id FROM @propuestas);
+        DELETE FROM dbo.PROPUESTA_AJUSTE WHERE propuesta_id IN (SELECT id FROM @propuestas);
+        DELETE FROM dbo.PROPUESTA_ENTREGABLE WHERE propuesta_id IN (SELECT id FROM @propuestas);
+        DELETE FROM dbo.RESPUESTA_PROPUESTA WHERE propuesta_id IN (SELECT id FROM @propuestas);
+        DELETE FROM dbo.OBJECION WHERE propuesta_id IN (SELECT id FROM @propuestas);
+        DELETE FROM dbo.SEGUIMIENTO_LEAD WHERE lead_id = @l OR oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.PERFIL_NEGOCIACION WHERE lead_id = @l OR oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.DIAGNOSTICO WHERE lead_id = @l OR oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.PROPUESTA WHERE lead_id = @l OR oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.RESPONSABLE_PAGO WHERE lead_id = @l;
+        DELETE FROM dbo.OPORTUNIDAD_EVENTO WHERE oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.CONVERSACION WHERE contacto_id = @contacto;
+        DELETE FROM dbo.OPORTUNIDAD_COMERCIAL WHERE lead_id = @l;
+        DELETE FROM dbo.CONSENTIMIENTO_HISTORIAL WHERE contacto_id = @contacto;
+        DELETE FROM dbo.PERFIL_ACADEMICO WHERE contacto_id = @contacto;
+        DELETE FROM dbo.INTERACCION_CAPTACION WHERE buyer_id = @buyer;
+        DELETE FROM dbo.DESCARGA_CONTENIDO WHERE buyer_id = @buyer;
+        DELETE FROM dbo.SEGUIMIENTO_BUYER WHERE buyer_id = @buyer;
+        DELETE FROM dbo.LEAD WHERE lead_id = @l;
+        DELETE FROM dbo.BUYER WHERE buyer_id = @buyer;
+        UPDATE dbo.PERFIL_ACADEMICO SET recomendado_por_contacto_id = NULL WHERE recomendado_por_contacto_id = @contacto;
+        DELETE FROM dbo.CONTACTO WHERE contacto_id = @contacto;`);
+    });
+    publicar('oltp', { tipo: 'lead_eliminado', leadId });
     return { ok: true };
   });
 
@@ -180,6 +276,7 @@ export function rutasLeads(app: FastifyInstance) {
     await enTransaccion(await oltp(), async (tx) => {
       await new sql.Request(tx).input('c', sql.Int, c).input('r', sql.Bit, b.accion === 'REVOCA').query(`
         UPDATE dbo.CONTACTO SET consentimiento_contacto = CASE WHEN @r = 1 THEN 0 ELSE 1 END, no_contactar = @r,
+               whatsapp_habilitado = CASE WHEN @r = 1 THEN 0 ELSE whatsapp_habilitado END,
                fecha_revocacion = CASE WHEN @r = 1 THEN SYSDATETIME() ELSE NULL END,
                fecha_consentimiento = CASE WHEN @r = 0 THEN SYSDATETIME() ELSE fecha_consentimiento END,
                estado = CASE WHEN @r = 1 THEN 'BAJA' ELSE 'ACTIVO' END

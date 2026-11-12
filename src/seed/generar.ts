@@ -207,7 +207,7 @@ export async function generarSeed(): Promise<ResumenSeed> {
         const fRev = masDias(inicio, az.real(3, 20));
         if (fRev < FIN_DATOS) {
           await new sql.Request(tx).input('id', sql.Int, contactoId).input('f', sql.DateTime2, fRev).query(
-            `UPDATE dbo.CONTACTO SET consentimiento_contacto = 0, no_contactar = 1, fecha_revocacion = @f, estado = 'BAJA' WHERE contacto_id = @id;
+            `UPDATE dbo.CONTACTO SET consentimiento_contacto = 0, no_contactar = 1, whatsapp_habilitado = 0, fecha_revocacion = @f, estado = 'BAJA' WHERE contacto_id = @id;
              UPDATE dbo.BUYER SET estado = 'NO_CONTACTAR' WHERE contacto_id = @id;`);
           await ins(tx, 'CONSENTIMIENTO_HISTORIAL', { contacto_id: contactoId, fecha: fRev, accion: 'REVOCA', medio: 'WHATSAPP',
             finalidad: 'Información y asesoría comercial de tesis', evidencia: 'Escribió «BAJA» (dato sintético)' });

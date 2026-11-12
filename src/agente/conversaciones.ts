@@ -50,7 +50,7 @@ export async function crearConversacionSimulada(d: { nombres?: string; apellidos
   return r;
 }
 
-/** Conversación activa de un número de WhatsApp; si es la primera vez, crea al estudiante (lo usa el webhook de OpenWA). */
+/** Conversación activa de un lead de WhatsApp; los contactos desconocidos se descartan antes del alta. */
 export async function asegurarConversacionWhatsApp(chatId: string, nombreVisible: string | null, numeroTelefono?: string) {
   const pool = await oltp();
   const ex = await pool.request().input('chat', sql.VarChar, chatId).query(`
@@ -62,15 +62,17 @@ export async function asegurarConversacionWhatsApp(chatId: string, nombreVisible
   const previa = await pool.request().input('w', sql.VarChar, numero.slice(0, 20)).input('chat', sql.VarChar, chatId).query(`
     UPDATE TOP (1) cv SET chat_id = @chat OUTPUT INSERTED.conversacion_id
     FROM dbo.CONVERSACION cv JOIN dbo.CONTACTO c ON c.contacto_id = cv.contacto_id
-    WHERE c.whatsapp = @w AND cv.canal_mensajeria = 'WHATSAPP' AND cv.estado <> 'CERRADA'`);
+    WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(c.whatsapp, '+', ''), ' ', ''), '-', ''), '(', ''), ')', ''), '.', '') = @w
+      AND cv.canal_mensajeria = 'WHATSAPP' AND cv.estado <> 'CERRADA'`);
   if (previa.recordset[0]) return previa.recordset[0].conversacion_id as number;
-  // ¿Ya es un lead (p. ej. llegó desde BUYERS con su consentimiento)? Se abre la conversación sobre su oportunidad vigente.
+  // ¿Ya es un lead habilitado? Se abre la conversación sobre su oportunidad más reciente, si la tiene.
   const conocido = await pool.request().input('w', sql.VarChar, numero.slice(0, 20)).query(`
     SELECT TOP 1 c.contacto_id, o.oportunidad_id FROM dbo.CONTACTO c JOIN dbo.BUYER b ON b.contacto_id = c.contacto_id JOIN dbo.LEAD l ON l.buyer_id = b.buyer_id
-    JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.lead_id = l.lead_id WHERE c.whatsapp = @w
+    LEFT JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.lead_id = l.lead_id
+    WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(c.whatsapp, '+', ''), ' ', ''), '-', ''), '(', ''), ')', ''), '.', '') = @w
     ORDER BY CASE WHEN o.estado IN ('DESCARTADA','PAYER_CONFIRMADO') THEN 1 ELSE 0 END, o.fecha_inicio DESC`);
   if (conocido.recordset[0]) {
-    const c = await pool.request().input('c', sql.Int, conocido.recordset[0].contacto_id).input('o', sql.Int, conocido.recordset[0].oportunidad_id).input('chat', sql.VarChar, chatId).query(`
+    const c = await pool.request().input('c', sql.Int, conocido.recordset[0].contacto_id).input('o', sql.Int, conocido.recordset[0].oportunidad_id ?? null).input('chat', sql.VarChar, chatId).query(`
       INSERT dbo.CONVERSACION (contacto_id, tipo_ventana, ventana_hasta, estado, canal_mensajeria, chat_id, oportunidad_id)
       OUTPUT INSERTED.conversacion_id VALUES (@c, 'SERVICIO_24H', DATEADD(HOUR, 24, SYSDATETIME()), 'ABIERTA', 'WHATSAPP', @chat, @o)`);
     publicar('conversacion', { conversacionId: c.recordset[0].conversacion_id, nueva: true });
@@ -101,7 +103,7 @@ export async function listarConversaciones(filtro: { canal?: string; estado?: st
 export async function detalleConversacion(conversacionId: number) {
   const r = await (await oltp()).request().input('c', sql.Int, conversacionId).query(`
     SELECT cv.conversacion_id, cv.canal_mensajeria, cv.chat_id, cv.estado, cv.control_humano, cv.asesor_control_id, cv.fecha_inicio, cv.oportunidad_id,
-           co.contacto_id, co.nombres, co.apellidos, co.es_demo, co.consentimiento_contacto, co.no_contactar, o.estado AS estado_oportunidad, o.lead_id,
+           co.contacto_id, co.nombres, co.apellidos, co.es_demo, co.consentimiento_contacto, co.no_contactar, co.whatsapp_habilitado, o.estado AS estado_oportunidad, o.lead_id,
            a.nombre AS asesor_control
     FROM dbo.CONVERSACION cv JOIN dbo.CONTACTO co ON co.contacto_id = cv.contacto_id
     LEFT JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.oportunidad_id = cv.oportunidad_id LEFT JOIN dbo.ASESOR a ON a.asesor_id = cv.asesor_control_id

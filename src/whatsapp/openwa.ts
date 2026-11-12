@@ -1,27 +1,33 @@
 // Integración con OpenWA (gateway de WhatsApp Web, proceso aparte en vendor/OpenWA).
 // - Sesión: la crea/arranca la app; el QR se muestra en la pantalla Conversaciones.
 // - Entrada: OpenWA llama a POST /api/whatsapp/webhook firmado con HMAC-SHA256 (X-OpenWA-Signature).
-// - Reglas: solo números de WHATSAPP_ALLOWLIST; la primera conversación de un número empieza solo con la
-//   frase de activación (el agente nunca escribe primero); se ignoran grupos, estados, mensajes propios y viejos.
+// - Reglas: solo contactos habilitados desde la aplicación con consentimiento vigente; se ignoran
+//   grupos, estados, mensajes propios y viejos.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { RAIZ, config } from '../config.js';
 import { oltp, sql } from '../db.js';
 import { asegurarConversacionWhatsApp } from '../agente/conversaciones.js';
-import { normalizar } from '../agente/guardas.js';
 import { procesarMensajeEntrante } from '../agente/motor.js';
 import { publicar } from '../server/eventos.js';
+import { ErrorNegocio } from '../negocio/oportunidad.js';
 
 export type EstadoWhatsApp = 'NO_CONFIGURADO' | 'SIN_CONEXION' | 'DESCONECTADO' | 'CONECTANDO' | 'ESPERANDO_QR' | 'CONECTADO' | 'ERROR';
+interface ContactoWhatsApp {
+  contacto_id: number;
+  whatsapp: string | null;
+  whatsapp_habilitado: boolean;
+  consentimiento_contacto: boolean;
+  no_contactar: boolean;
+  lead_id: number;
+}
 
 const cfg = () => ({
   habilitado: !/^false$/i.test(process.env.OPENWA_ENABLED || ''),
   url: (process.env.OPENWA_URL || 'http://localhost:2785').replace(/\/$/, ''),
   sesion: process.env.OPENWA_SESSION_ID || 'inbestiga-demo',
   secreto: process.env.OPENWA_WEBHOOK_SECRET || '',
-  allowlist: (process.env.WHATSAPP_ALLOWLIST || '').split(',').map((x) => x.replace(/\D/g, '')).filter(Boolean),
-  frase: process.env.WHATSAPP_ACTIVATION_PHRASE || 'Hola, quiero información de asesoría de tesis',
 });
 
 function apiKey(): string {
@@ -42,8 +48,27 @@ function fijarEstado(cambios: Partial<typeof estado>) {
 export const resumenEstado = () => {
   const c = cfg();
   return { estado: estado.estado, telefono: estado.telefono, nombre: estado.nombre, detalle: estado.detalle, sesion: c.sesion,
-    numerosPermitidos: c.allowlist.length, fraseActivacion: c.frase, webhookListo: estado.webhookListo };
+    webhookListo: estado.webhookListo };
 };
+
+const telefonoNormalizadoSql = `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(c.whatsapp, '+', ''), ' ', ''), '-', ''), '(', ''), ')', ''), '.', '')`;
+
+async function contactoPorNumero(numero: string): Promise<ContactoWhatsApp | null> {
+  const r = await (await oltp()).request().input('w', sql.VarChar(20), numero).query(`
+    SELECT TOP 1 c.contacto_id, c.whatsapp, c.whatsapp_habilitado, c.consentimiento_contacto, c.no_contactar,
+      l.lead_id
+    FROM dbo.CONTACTO c JOIN dbo.BUYER b ON b.contacto_id = c.contacto_id
+    JOIN dbo.LEAD l ON l.buyer_id = b.buyer_id
+    WHERE ${telefonoNormalizadoSql} = @w`);
+  return r.recordset[0] ?? null;
+}
+
+function validarPermisoContacto(c: ContactoWhatsApp | null) {
+  if (!c?.contacto_id || !c.lead_id) throw new ErrorNegocio('No hay un lead registrado para este número de WhatsApp.', 409);
+  if (!c.whatsapp_habilitado) throw new ErrorNegocio('WhatsApp no está habilitado para este lead desde la aplicación.', 409);
+  if (c.no_contactar || !c.consentimiento_contacto)
+    throw new ErrorNegocio('El contacto no tiene consentimiento vigente para WhatsApp.', 409);
+}
 
 class ErrorOpenWA extends Error { constructor(public estadoHttp: number, m: string) { super(m); } }
 
@@ -147,6 +172,15 @@ export async function desconectar() {
 }
 
 export async function enviarTexto(chatId: string, texto: string) {
+  const porChat = await (await oltp()).request().input('chat', sql.VarChar(60), chatId).query(`
+    SELECT TOP 1 c.contacto_id, c.whatsapp, c.whatsapp_habilitado, c.consentimiento_contacto, c.no_contactar,
+      l.lead_id
+    FROM dbo.CONVERSACION cv JOIN dbo.CONTACTO c ON c.contacto_id = cv.contacto_id
+    JOIN dbo.BUYER b ON b.contacto_id = c.contacto_id JOIN dbo.LEAD l ON l.buyer_id = b.buyer_id
+    WHERE cv.chat_id = @chat AND cv.canal_mensajeria = 'WHATSAPP' ORDER BY cv.conversacion_id DESC`);
+  const numero = chatId.replace(/@.*/, '').replace(/\D/g, '');
+  const contacto = porChat.recordset[0] ?? (numero ? await contactoPorNumero(numero) : null);
+  validarPermisoContacto(contacto);
   if (estado.estado !== 'CONECTADO' || !estado.sesionId) await sincronizar(true);
   if (estado.estado !== 'CONECTADO') throw new ErrorOpenWA(0, 'WhatsApp no está conectado.');
   await llamar('POST', `/api/sessions/${estado.sesionId}/messages/send-text`, { chatId, text: texto });
@@ -185,20 +219,21 @@ export async function manejarEvento(evento: { event: string; data: any }): Promi
   if (m.timestamp && Date.now() / 1000 - Number(m.timestamp) > 600) return { procesado: false, motivo: 'mensaje de hace más de 10 minutos (pendiente de una reconexión)' };
   const chatId: string = m.chatId || m.from;
   const numero = String(m.senderPhone || m.from || '').replace(/@.*/, '').replace(/\D/g, '');
-  const c = cfg();
-  if (!c.allowlist.includes(numero)) return { procesado: false, motivo: `número fuera de WHATSAPP_ALLOWLIST (…${numero.slice(-4)})` };
+  const contacto = numero ? await contactoPorNumero(numero) : null;
+  if (!contacto) return { procesado: false, motivo: `número sin lead registrado (…${numero.slice(-4)})` };
+  if (!contacto.whatsapp_habilitado) return { procesado: false, motivo: 'WhatsApp no está habilitado para este lead desde la aplicación' };
+  if (!contacto.consentimiento_contacto || contacto.no_contactar) return { procesado: false, motivo: 'el contacto no tiene consentimiento vigente' };
   const texto = String(m.body ?? '').trim();
   if (m.type && m.type !== 'text' && m.type !== 'chat') {
     if (!texto) return { procesado: false, motivo: `tipo no soportado: ${m.type}` };
   }
   if (!texto) return { procesado: false, motivo: 'mensaje vacío' };
 
-  const existente = await (await oltp()).request().input('chat', sql.VarChar, chatId).input('w', sql.VarChar, numero.slice(0, 20))
-    .query(`SELECT TOP 1 conversacion_id FROM dbo.CONVERSACION WHERE chat_id = @chat AND canal_mensajeria = 'WHATSAPP';
-            SELECT COUNT(*) AS n FROM dbo.CONTACTO c JOIN dbo.BUYER b ON b.contacto_id = c.contacto_id WHERE c.whatsapp = @w;`);
-  const leadConocido = (existente.recordsets as any[])[1][0].n > 0;   // lead que llegó desde BUYERS: no necesita la frase
-  if (!existente.recordset[0] && !leadConocido && !frasesCoinciden(texto, c.frase))
-    return { procesado: false, motivo: 'primer mensaje sin la frase de activación' };
+  const existente = await (await oltp()).request().input('chat', sql.VarChar, chatId)
+    .query(`SELECT TOP 1 conversacion_id, contacto_id FROM dbo.CONVERSACION
+            WHERE chat_id = @chat AND canal_mensajeria = 'WHATSAPP' ORDER BY conversacion_id DESC`);
+  if (existente.recordset[0] && existente.recordset[0].contacto_id !== contacto.contacto_id)
+    return { procesado: false, motivo: 'el chat de WhatsApp está asociado a otro contacto' };
 
   const conv = existente.recordset[0]?.conversacion_id ?? await asegurarConversacionWhatsApp(chatId, m.contact?.pushName || m.contact?.name || null, numero);
   const idExterno = typeof m.id === 'string' ? m.id : m.id?._serialized ?? null;
@@ -207,14 +242,6 @@ export async function manejarEvento(evento: { event: string; data: any }): Promi
   try { await enviarTexto(chatId, r.respuesta); }
   catch (e: any) { console.error('[whatsapp] no se pudo enviar la respuesta:', e.message); publicar('whatsapp', { ...resumenEstado(), errorEnvio: e.message }); }
   return { procesado: true, respuesta: r.respuesta };
-}
-
-/** La frase de activación coincide si el mensaje contiene sus palabras significativas (sin tildes ni signos). */
-function frasesCoinciden(texto: string, frase: string) {
-  const limpio = (s: string) => normalizar(s).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((w) => w.length > 3);
-  const t = new Set(limpio(texto));
-  const f = limpio(frase);
-  return f.length > 0 && f.filter((w) => t.has(w)).length >= Math.ceil(f.length * 0.8);
 }
 
 /** Arranque: sincroniza al iniciar y luego cada 20 s mientras no esté conectado (OpenWA puede tardar en levantar). */
@@ -231,24 +258,23 @@ const TEXTO_PRIMER_CONTACTO = 'Hola {nombre}, te escribe el asistente virtual de
 
 /**
  * El agente escribe PRIMERO a un lead existente (lo pide un asesor desde Conversaciones).
- * Solo con consentimiento vigente (Ley 29733), sin «no contactar», con número en WHATSAPP_ALLOWLIST y WhatsApp conectado.
+ * Solo con permiso habilitado desde la aplicación, consentimiento vigente y WhatsApp conectado.
  * Se envía la plantilla de primer contacto (fuera de la ventana de 24 h solo se permiten plantillas).
  */
 export async function iniciarConversacionConLead(leadId: number, asesor: string | null) {
   const pool = await oltp();
   const r = await pool.request().input('l', sql.Int, leadId).query(`
-    SELECT TOP 1 c.contacto_id, c.nombres, c.whatsapp, c.consentimiento_contacto, c.no_contactar, o.oportunidad_id, o.estado
+    SELECT TOP 1 c.contacto_id, c.nombres, c.whatsapp, c.whatsapp_habilitado, c.consentimiento_contacto, c.no_contactar, o.oportunidad_id, o.estado
     FROM dbo.LEAD l JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id JOIN dbo.CONTACTO c ON c.contacto_id = b.contacto_id
     LEFT JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.lead_id = l.lead_id
     WHERE l.lead_id = @l ORDER BY CASE WHEN o.estado IN ('DESCARTADA','PAYER_CONFIRMADO') THEN 1 ELSE 0 END, o.fecha_inicio DESC`);
   const x = r.recordset[0];
-  const { ErrorNegocio } = await import('../negocio/oportunidad.js');
   if (!x) throw new ErrorNegocio('Ese lead no existe.', 404);
   const numero = String(x.whatsapp ?? '').replace(/\D/g, '');
   if (!numero) throw new ErrorNegocio('El lead no tiene número de WhatsApp registrado. Regístralo desde la pantalla BUYERS con su número.');
   if (x.no_contactar) throw new ErrorNegocio('El estudiante pidió no ser contactado (revocó su consentimiento).', 409);
   if (!x.consentimiento_contacto) throw new ErrorNegocio('El lead no tiene consentimiento de contacto: el agente no puede escribirle primero (Ley 29733).', 409);
-  if (!cfg().allowlist.includes(numero)) throw new ErrorNegocio(`El número …${numero.slice(-4)} no está en WHATSAPP_ALLOWLIST del .env. Agrégalo y reinicia la app.`, 409);
+  if (!x.whatsapp_habilitado) throw new ErrorNegocio('Activa WhatsApp para este lead desde la ventana de conversaciones.', 409);
   if (!x.oportunidad_id) throw new ErrorNegocio('El lead no tiene una oportunidad comercial.');
   if (['DESCARTADA', 'PAYER_CONFIRMADO'].includes(x.estado)) throw new ErrorNegocio('La oportunidad de ese lead ya está cerrada.', 409);
 

@@ -8,7 +8,8 @@ export async function buscarLeads(texto: string) {
   const t = texto.trim();
   const num = /^\d{1,9}$/.test(t) ? Number(t) : null;
   const r = await (await oltp()).request().input('t', sql.NVarChar, `%${t}%`).input('n', sql.Int, num).query(`
-    SELECT TOP 12 l.lead_id, l.buyer_id, co.contacto_id, co.nombres, co.apellidos, co.whatsapp, co.es_demo, ca.nombre AS carrera,
+    SELECT TOP 12 l.lead_id, l.buyer_id, co.contacto_id, co.nombres, co.apellidos, co.whatsapp, co.whatsapp_habilitado,
+           co.consentimiento_contacto, co.no_contactar, co.es_demo, ca.nombre AS carrera,
            (SELECT TOP 1 estado FROM dbo.OPORTUNIDAD_COMERCIAL o WHERE o.lead_id = l.lead_id ORDER BY o.fecha_inicio DESC) AS estado
     FROM dbo.LEAD l JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id JOIN dbo.CONTACTO co ON co.contacto_id = b.contacto_id
     LEFT JOIN dbo.PERFIL_ACADEMICO pa ON pa.contacto_id = co.contacto_id LEFT JOIN dbo.CARRERA ca ON ca.carrera_id = pa.carrera_id
@@ -25,7 +26,7 @@ export async function fichaNominal(leadId: number) {
     -- 0 identidad + lead + perfil académico + canal de origen (BUYERS: solo lectura)
     SELECT l.lead_id, l.buyer_id, l.fecha_lead, l.prioridad, l.estado AS estado_lead,
            co.contacto_id, co.nombres, co.apellidos, co.whatsapp, co.correo, co.consentimiento_contacto, co.fecha_consentimiento,
-           co.no_contactar, co.fecha_revocacion, co.estado AS estado_contacto, co.es_demo,
+           co.no_contactar, co.fecha_revocacion, co.estado AS estado_contacto, co.es_demo, co.whatsapp_habilitado,
            u.nombre AS universidad, u.tipo AS tipo_universidad, ca.nombre AS carrera, ca.facultad, pa.sede, pa.ciclo, pa.etapa_academica,
            pa.tipo_investigacion, pa.avance,
            cn.nombre AS canal, cn.tipo AS tipo_canal, cn.plataforma, cp.nombre AS campania, si.nombre AS servicio_interes,

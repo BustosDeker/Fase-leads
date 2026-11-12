@@ -67,6 +67,9 @@ export function rutasAgente(app: FastifyInstance) {
     const det = await detalleConversacion(c);
     if (!det) return reply.code(404).send({ error: 'La conversación no existe.' });
     if (det.conversacion.no_contactar) return reply.code(409).send({ error: 'El estudiante revocó su consentimiento: no se le puede escribir.' });
+    if (det.conversacion.canal_mensajeria === 'WHATSAPP'
+      && (!det.conversacion.whatsapp_habilitado || !det.conversacion.consentimiento_contacto))
+      return reply.code(409).send({ error: 'WhatsApp no está habilitado para este lead o su consentimiento ya no está vigente.' });
     if (!det.conversacion.control_humano) await tomarControl(c, asesorId);   // escribir como persona implica tomar el control
     await guardarMensaje(c, 'ESPECIALISTA', texto, { asesorId });
     if (det.conversacion.canal_mensajeria === 'WHATSAPP') {

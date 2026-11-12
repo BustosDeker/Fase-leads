@@ -59,7 +59,20 @@ export function Ficha() {
     mutationFn: () => api.post(`/api/leads/${leadId}/contacto`, contactoEditado),
     onSuccess: async () => {
       setEditarContacto(false);
-      await cliente.invalidateQueries({ queryKey: ['ficha', leadId] });
+      await Promise.all([
+        cliente.invalidateQueries({ queryKey: ['ficha', leadId] }),
+        cliente.invalidateQueries({ queryKey: ['buscar'] }),
+      ]);
+    },
+  });
+  const eliminarLead = useMutation({
+    mutationFn: () => api.delete(`/api/leads/${leadId}`),
+    onSuccess: async () => {
+      await Promise.all([
+        cliente.invalidateQueries({ queryKey: ['pipeline'] }),
+        cliente.invalidateQueries({ queryKey: ['buscar'] }),
+      ]);
+      setParams({});
     },
   });
 
@@ -90,6 +103,7 @@ export function Ficha() {
       {q.isLoading && <div className="tarjeta h-40 animate-pulse" />}
       {q.isError && <Aviso>{(q.error as Error).message}</Aviso>}
       {accion.isError && <Aviso>{(accion.error as Error).message}</Aviso>}
+      {eliminarLead.isError && <Aviso>{(eliminarLead.error as Error).message}</Aviso>}
 
       {f && p && (
         <>
@@ -113,6 +127,11 @@ export function Ficha() {
               )}
               {op && ['APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(op.estado) && <Link className="boton-negro" to={`/leads/cotizador?op=${op.oportunidad_id}`}>Cotizar</Link>}
               {op && <Link className="boton-claro" to={`/leads/agenda?op=${op.oportunidad_id}`}>Agendar cita</Link>}
+              <button className="boton-claro border-malo-marca text-malo-texto" disabled={eliminarLead.isPending}
+                onClick={() => {
+                  if (window.confirm(`¿Eliminar el lead de ${p.nombres} ${p.apellidos} y sus datos de prueba, conversaciones e historial comercial? Esta acción no se puede deshacer. Los leads con pagos u honorarios se conservan y no podrán eliminarse.`))
+                    eliminarLead.mutate();
+                }}>{eliminarLead.isPending ? 'Eliminando…' : 'Eliminar lead'}</button>
             </div>
           </section>
 
@@ -144,7 +163,7 @@ export function Ficha() {
                   <label><span className="etiqueta-campo">Correo</span>
                     <input className="campo" type="email" maxLength={150} value={contactoEditado.correo}
                       onChange={(e) => setContactoEditado({ ...contactoEditado, correo: e.target.value })} /></label>
-                  <p className="nota sm:col-span-2">El WhatsApp debe incluir el código de país, por ejemplo 51. Déjalo vacío si no tiene número. Esto no modifica el consentimiento.</p>
+                  <p className="nota sm:col-span-2">El WhatsApp debe incluir el código de país, por ejemplo 51. Déjalo vacío si no tiene número. Esto no modifica el consentimiento; al cambiar el número tendrás que volver a habilitar WhatsApp desde Conversaciones.</p>
                   {guardarContacto.isError && <div className="sm:col-span-2"><Aviso>{(guardarContacto.error as Error).message}</Aviso></div>}
                   <div className="flex gap-2 sm:col-span-2">
                     <button className="boton-negro" disabled={guardarContacto.isPending}>

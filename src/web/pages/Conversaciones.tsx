@@ -25,6 +25,7 @@ export function Conversaciones() {
   const cliente = useQueryClient();
   const navegar = useNavigate();
   const [filtroCanal, setFiltroCanal] = useState('');
+  const [leadWhatsApp, setLeadWhatsApp] = useState<F | null>(null);
 
   const estado = useQuery({ queryKey: ['agente-estado'], queryFn: () => api.get<F>('/api/agente/estado') });
   const lista = useQuery({ queryKey: ['conversaciones', filtroCanal], queryFn: () => api.get<F[]>('/api/conversaciones', { canal: filtroCanal }) });
@@ -44,6 +45,14 @@ export function Conversaciones() {
   const iniciar = useMutation({
     mutationFn: (leadId: number) => api.post<F>('/api/whatsapp/iniciar', { leadId }),
     onSuccess: (r) => { setParams({ c: String(r.conversacionId) }); cliente.invalidateQueries({ queryKey: ['conversaciones'] }); },
+  });
+  const activarWhatsApp = useMutation({
+    mutationFn: ({ leadId, habilitado }: { leadId: number; habilitado: boolean }) =>
+      api.post(`/api/leads/${leadId}/whatsapp`, { habilitado }),
+    onSuccess: (_r, variables) => {
+      setLeadWhatsApp((actual) => actual?.lead_id === variables.leadId ? { ...actual, whatsapp_habilitado: variables.habilitado } : actual);
+      cliente.invalidateQueries({ queryKey: ['buscar'] });
+    },
   });
 
   return (
@@ -71,11 +80,30 @@ export function Conversaciones() {
           </Bloque>
 
           <Bloque titulo="Escribir primero por WhatsApp" origen="El agente envía el primer mensaje a un lead desde el número vinculado y luego continúa la conversación">
-            <BuscadorLead placeholder="Buscar lead con WhatsApp…" alElegir={(r) => {
-              if (!r.whatsapp) { window.alert('Ese lead no tiene número de WhatsApp. Regístralo desde la pantalla BUYERS con su número.'); return; }
-              if (window.confirm(`¿Enviar el primer mensaje del agente a ${r.nombres} ${r.apellidos} (…${r.whatsapp.slice(-4)}) por WhatsApp?`)) iniciar.mutate(r.lead_id);
-            }} />
-            <p className="nota mt-2">Requisitos: WhatsApp conectado, consentimiento vigente del lead y su número en WHATSAPP_ALLOWLIST (.env).</p>
+            <BuscadorLead placeholder="Buscar lead con WhatsApp…" alElegir={setLeadWhatsApp} />
+            {leadWhatsApp && (
+              <div className="mt-3 flex flex-col gap-2 rounded-lg border border-linea p-3">
+                <p className="text-sm font-medium">{leadWhatsApp.nombres} {leadWhatsApp.apellidos}</p>
+                <p className="nota">{leadWhatsApp.whatsapp ? `WhatsApp: +${leadWhatsApp.whatsapp}` : 'No tiene número de WhatsApp registrado.'}</p>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-1" checked={!!leadWhatsApp.whatsapp_habilitado}
+                    disabled={activarWhatsApp.isPending || (!leadWhatsApp.whatsapp_habilitado
+                      && (!leadWhatsApp.whatsapp || !leadWhatsApp.consentimiento_contacto || leadWhatsApp.no_contactar))}
+                    onChange={(e) => activarWhatsApp.mutate({ leadId: leadWhatsApp.lead_id, habilitado: e.target.checked })} />
+                  <span>Habilitar WhatsApp para este lead</span>
+                </label>
+                {!leadWhatsApp.consentimiento_contacto || leadWhatsApp.no_contactar
+                  ? <p className="nota text-regular-texto">Se necesita consentimiento vigente del contacto.</p>
+                  : null}
+                {activarWhatsApp.isError && <Aviso>{(activarWhatsApp.error as Error).message}</Aviso>}
+                <button className="boton-negro" disabled={!leadWhatsApp.whatsapp_habilitado || iniciar.isPending}
+                  onClick={() => {
+                    if (leadWhatsApp.whatsapp && window.confirm(`¿Enviar el primer mensaje a ${leadWhatsApp.nombres} ${leadWhatsApp.apellidos} (…${leadWhatsApp.whatsapp.slice(-4)}) por WhatsApp?`))
+                      iniciar.mutate(leadWhatsApp.lead_id);
+                  }}>Iniciar conversación</button>
+              </div>
+            )}
+            <p className="nota mt-2">Requisitos: WhatsApp conectado, número registrado, permiso activado para este lead y consentimiento vigente.</p>
             {iniciar.isPending && <p className="nota mt-2">Enviando…</p>}
             {iniciar.isError && <div className="mt-2"><Aviso>{(iniciar.error as Error).message}</Aviso></div>}
             {iniciar.data && <div className="mt-2"><Aviso tipo="ok">Mensaje enviado a {iniciar.data.enviadoA}. Cuando responda, el agente continúa.</Aviso></div>}

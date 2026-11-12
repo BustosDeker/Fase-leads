@@ -6,7 +6,9 @@ export class ErrorApi extends Error {
 async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
   let r: Response;
   try {
-    r = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) } });
+    const headers = new Headers(init?.headers);
+    if (init?.body != null && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    r = await fetch(url, { ...init, headers });
   } catch {
     throw new ErrorApi(0, 'No se pudo conectar con la aplicación. ¿Está corriendo `npm start`?');
   }
@@ -25,6 +27,7 @@ export const api = {
     return pedir<T>(s ? `${url}?${s}` : url);
   },
   post: <T>(url: string, cuerpo?: unknown) => pedir<T>(url, { method: 'POST', body: JSON.stringify(cuerpo ?? {}) }),
+  delete: <T>(url: string) => pedir<T>(url, { method: 'DELETE' }),
 };
 
 // ---------------------------------------------------------------- tipos de respuesta
