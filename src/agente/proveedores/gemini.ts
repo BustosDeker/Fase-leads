@@ -7,7 +7,15 @@ import { errorHttp, fetchConReintentos, sumarUso } from './comun.js';
 function esquemaGemini(e: any): any {
   if (Array.isArray(e)) return e.map(esquemaGemini);
   if (!e || typeof e !== 'object') return e;
+  // Gemini no acepta el JSON Schema union `type: ['string', 'null']` que
+  // generan algunas definiciones zod. La nulabilidad se representa con
+  // `nullable`, conservando el tipo que Gemini usa para la llamada.
   const { additionalProperties: _x, ...resto } = e;
+  if (Array.isArray(resto.type)) {
+    const tipos = resto.type.filter((tipo: unknown) => tipo !== 'null');
+    const tipo = tipos[0];
+    return esquemaGemini({ ...resto, type: tipo, ...(resto.type.includes('null') ? { nullable: true } : {}) });
+  }
   return Object.fromEntries(Object.entries(resto).map(([k, v]) => [k, esquemaGemini(v)]));
 }
 

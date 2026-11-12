@@ -25,7 +25,7 @@ const derivacionesPorLimite = new Map<number, number>();
 
 const MODELOS = {
   anthropic: new Set(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2', 'claude-fable-5-1', 'claude-fable-5', 'claude-mythos-5-2', 'claude-mythos-5-1', 'claude-mythos-5']),
-  gemini: new Set(['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro']),
+  gemini: new Set(['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro', 'gemini-3.1-flash-lite', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-3.8-flash']),
   openai: new Set(['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini']),
   // Modelos que la documentación oficial de Groq lista con local tool calling.
   groq: new Set(['openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'openai/gpt-oss-safeguard-20b', 'qwen/qwen3.8-27b', 'minimaxai/minimax-m2.7', 'meta-models/muse-spark-open']),
@@ -45,7 +45,7 @@ function configuracionInvalida(proveedorSolicitado: string, modelo: string) {
 export function obtenerProveedor(): ProveedorLLM {
   if (proveedor) return proveedor;
   const pedido = (process.env.LLM_PROVIDER || 'mock').toLowerCase();
-  const modelo = process.env.LLM_MODEL || (pedido === 'anthropic' ? 'claude-haiku-5-5' : pedido === 'gemini' ? 'gemini-2.5-flash' : pedido === 'openai' ? 'gpt-4.1-mini' : pedido === 'groq' ? 'openai/gpt-oss-20b' : 'reglas-v1');
+    const modelo = process.env.LLM_MODEL || (pedido === 'anthropic' ? 'claude-haiku-5-5' : pedido === 'gemini' ? 'gemini-3.1-flash-lite' : pedido === 'openai' ? 'gpt-4.1-mini' : pedido === 'groq' ? 'openai/gpt-oss-20b' : 'reglas-v1');
   const sinClave = (n: string) => {
     avisoProveedor = `LLM_PROVIDER=${pedido} pero ${n} no está definida o está vacía: se usa mock`;
     console.warn('[agente] ' + avisoProveedor);

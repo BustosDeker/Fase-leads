@@ -1,16 +1,20 @@
 // Formatos en español (Perú). Los porcentajes usan coma decimal, como el informe.
 const ZONA = 'America/Lima';
 
+/** SQL Server puede devolver datetime2 sin zona; el OLTP lo guarda en UTC. */
+const fechaNormalizada = (iso: string) =>
+  new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`);
+
 export const pct = (v: number | null, dec = 1) =>
   v === null ? 'Sin datos' : `${v.toLocaleString('es', { minimumFractionDigits: dec, maximumFractionDigits: dec })} %`;
 
 export const entero = (n: number) => n.toLocaleString('es-PE');
 
 export const fechaHora = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('es-PE', { timeZone: ZONA, dateStyle: 'medium', timeStyle: 'short' }) : '—';
+  iso ? fechaNormalizada(iso).toLocaleString('es-PE', { timeZone: ZONA, dateStyle: 'medium', timeStyle: 'short' }) : '—';
 
 export const fecha = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleDateString('es-PE', { timeZone: ZONA, day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  iso ? fechaNormalizada(iso).toLocaleDateString('es-PE', { timeZone: ZONA, day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 export const segundos = (ms: number | null | undefined) =>
   ms == null ? '—' : `${(ms / 1000).toLocaleString('es', { maximumFractionDigits: 1 })} s`;
@@ -35,4 +39,4 @@ export function aInputLocal(d: Date) {
 
 /** Fecha y hora compactas en 24 h (p. ej. 11/11/2026 20:37), para campos estrechos. */
 export const fechaHoraCorta = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('es-PE', { timeZone: ZONA, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
+  iso ? fechaNormalizada(iso).toLocaleString('es-PE', { timeZone: ZONA, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '—';
