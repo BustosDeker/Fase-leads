@@ -10,10 +10,6 @@ import { Aviso, Bloque, CampoBusqueda, Chip, ChipEstado, Encabezado, Segmentos, 
 
 type F = Record<string, any>;
 
-function Codigo({ children }: { children: string }) {
-  return <pre className="overflow-x-auto whitespace-pre rounded-lg bg-fondo p-3 text-xs leading-relaxed text-tinta">{children}</pre>;
-}
-
 export function Fase() {
   const { fase } = useParams();
   if (fase === 'buyers') return <Buyers />;
@@ -33,21 +29,6 @@ export function Fase() {
 }
 
 // ------------------------------------------------------------------ BUYERS
-const EJEMPLO_BUYERS = `POST /api/buyers
-Authorization: Bearer <BUYERS_TOKEN de .env>
-Content-Type: application/json
-
-{
-  "nombres": "Rosa", "apellidos": "Quispe Mendoza",
-  "whatsapp": "51987654321",
-  "consentimiento": { "otorgado": true, "fecha": "2026-11-10T15:20:00", "evidencia": "Marcó la casilla en el formulario de Instagram" },
-  "canal": "Instagram", "necesidad": "Asesoría integral de tesis",
-  "universidad": "UNT", "carrera": "Ingeniería Industrial", "etapa": "EGRESADO"
-}
-
-→ 201 { "creado": true, "leadId": 230, "oportunidadId": 247 }   (200 si ese WhatsApp ya era lead)
-→ 401 sin token · 400 sin consentimiento o datos inválidos`;
-
 function Buyers() {
   const navegar = useNavigate();
   const [f, setF] = useState({ nombres: '', apellidos: '', whatsapp: '', canal: 'Instagram', universidad: '', carrera: '', etapa: '', evidencia: 'Aceptó la política de datos en el formulario' });
@@ -60,9 +41,8 @@ function Buyers() {
     <div className="mx-auto flex max-w-[1400px] flex-col gap-5">
       <Encabezado fase="BUYERS" ruta="Integración con LEADS" titulo="BUYERS → LEADS" />
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <Bloque titulo="Contrato de integración" origen="BUYERS envía cada lead con su consentimiento (Ley 29733). Sin consentimiento, LEADS lo rechaza.">
-          <Codigo>{EJEMPLO_BUYERS}</Codigo>
-          <ul className="mt-3 flex flex-col gap-1 text-sm text-tinta-2">
+        <Bloque titulo="Cómo funciona la integración" origen="BUYERS envía cada lead con su consentimiento (Ley 29733). Sin consentimiento, LEADS lo rechaza.">
+          <ul className="flex flex-col gap-1 text-sm text-tinta-2">
             <li>• Idempotente por número de WhatsApp: reenviar el mismo lead no lo duplica.</li>
             <li>• Crea contacto, buyer, lead y oportunidad «Abierta», y guarda el consentimiento en el historial con medio BUYERS.</li>
             <li>• Si llega universidad, carrera y etapa reconocibles, se registra también el perfil académico.</li>
@@ -97,19 +77,6 @@ function Buyers() {
 }
 
 // ------------------------------------------------------------------ PAYERS
-const EJEMPLO_PAYERS = `LEADS → PAYERS (al aceptar la propuesta)
-POST <PAYERS_URL>            Idempotency-Key: leads-op247-v2
-{ "oportunidad_id": 247, "propuesta_id": 512, "version": 2, "servicio": "…",
-  "precio_final": 2376.00, "estudiante": "…", "whatsapp": "51…", "correo": null }
-
-PAYERS → LEADS (contratación confirmada)
-POST /api/payers/confirmacion
-Authorization: Bearer <PAYERS_TOKEN de .env>
-{ "event_id": "pay-7f3a91", "oportunidad_id": 247, "fecha_confirmacion": "2026-11-12T10:05:00", "orden_pago_ref": 88 }
-
-→ 200 { "duplicado": false }  (repetir el mismo event_id devuelve { "duplicado": true } sin cambios)
-→ 409 si la oportunidad no está transferida · 401 sin token`;
-
 function Payers() {
   const navegar = useNavigate();
   const cliente = useQueryClient();
@@ -151,8 +118,14 @@ function Payers() {
                 : null },
           ]} />
       </Bloque>
-      <Bloque titulo="Contrato de integración" origen="LEADS no guarda montos pagados ni medios de pago: solo la referencia de la confirmación">
-        <Codigo>{EJEMPLO_PAYERS}</Codigo>
+      <Bloque titulo="Cómo funciona la integración" origen="LEADS no guarda montos pagados ni medios de pago: solo la referencia de la confirmación">
+        <ul className="flex flex-col gap-1 text-sm text-tinta-2">
+          <li>• Al aceptar la propuesta, LEADS la transfiere a PAYERS con el servicio, la versión, el precio final y los datos de contacto del estudiante.</li>
+          <li>• Cada transferencia lleva una clave de idempotencia: reenviarla no duplica el cobro.</li>
+          <li>• PAYERS confirma la contratación indicando el evento, la oportunidad, la fecha y la referencia de la orden de pago.</li>
+          <li>• Si PAYERS repite una confirmación ya recibida, LEADS la marca como duplicada y no cambia nada.</li>
+          <li>• Solo se pueden confirmar oportunidades ya transferidas, y la confirmación exige el token de PAYERS.</li>
+        </ul>
       </Bloque>
     </div>
   );

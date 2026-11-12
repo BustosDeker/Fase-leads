@@ -27,6 +27,7 @@ export function proveedorOpenAI(apiKey: string, modelo: string, opciones: Opcion
       const tools = p.herramientas.map((h) => ({ type: 'function', function: { name: h.nombre, description: h.descripcion, parameters: h.esquema } }));
       let historial = p.historial;
       let recorteRealizado = false;
+      let reintentosToolFallido = 0;
       const mensajes: any[] = [
         { role: 'system', content: p.sistema + '\n\nSituación actual:\n' + p.contexto },
         ...historial.map((m) => ({ role: m.rol, content: m.texto })),
@@ -45,6 +46,13 @@ export function proveedorOpenAI(apiKey: string, modelo: string, opciones: Opcion
           mensajes.splice(0, mensajes.length, { role: 'system', content: p.sistema + '\n\nSituación actual:\n' + p.contexto },
             ...historial.map((m) => ({ role: m.rol, content: m.texto })));
           ronda = -1;
+          continue;
+        }
+        // Algunos modelos (p. ej. gpt-oss en Groq) a veces generan un nombre de herramienta mal formado
+        // y la API responde 400 `tool_use_failed`. Es un fallo aleatorio del modelo: se reintenta la misma ronda.
+        if (res.status === 400 && reintentosToolFallido < 2 && (await res.clone().text()).includes('tool_use_failed')) {
+          reintentosToolFallido++;
+          ronda--;
           continue;
         }
         if (!res.ok) throw errorHttp(nombreProveedor === 'groq' ? 'Groq' : 'OpenAI', res.status);
