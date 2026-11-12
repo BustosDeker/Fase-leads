@@ -47,3 +47,15 @@ test('reconoce universidad, carrera y etapa en texto libre', () => {
   assert.equal(detectarEtapa('ciclo IX'), 'CICLO_IX');
   assert.equal(detectarEtapa('hola'), null);
 });
+
+test('webhook de WhatsApp: acepta solo la firma HMAC correcta', async () => {
+  process.env.OPENWA_WEBHOOK_SECRET = 'secreto-de-prueba-123';
+  const { firmaValida } = await import('../src/whatsapp/openwa.js');
+  const crypto = await import('node:crypto');
+  const cuerpo = JSON.stringify({ event: 'message.received', data: { body: 'hola' } });
+  const firma = 'sha256=' + crypto.createHmac('sha256', 'secreto-de-prueba-123').update(cuerpo).digest('hex');
+  assert.equal(firmaValida(cuerpo, firma), true);
+  assert.equal(firmaValida(cuerpo + ' ', firma), false);
+  assert.equal(firmaValida(cuerpo, 'sha256=' + '0'.repeat(64)), false);
+  assert.equal(firmaValida(cuerpo, undefined), false);
+});

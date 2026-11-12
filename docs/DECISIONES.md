@@ -151,3 +151,12 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - **Alta de estudiantes desde el chat.** Un número nuevo crea CONTACTO → BUYER → LEAD → OPORTUNIDAD (`ABIERTA`). En el simulador se marcan `es_demo = 1` y `seed:reset` los borra.
 - **Claude:** SDK oficial, `claude-opus-5-5` por defecto, esfuerzo `medium` configurable (`LLM_EFFORT`), bloque de reglas cacheado y respaldo de servidor ante una negativa por política (`fallbacks: "default"`).
 - **zod 3.24 → 3.25** porque el SDK de Anthropic lo pide como dependencia opcional (misma versión mayor, sin cambios en el código).
+
+## 15. WhatsApp con OpenWA (E6)
+
+- **OpenWA va como proceso aparte** (`vendor/OpenWA`, compilado en `npm run setup`, arrancado por `npm start`). La app solo usa su API HTTP: sesión, QR, envío de texto y webhooks.
+- **Webhook a `localhost`.** OpenWA bloquea por defecto los webhooks a direcciones internas (protección SSRF). `setup` agrega `SSRF_ALLOWED_HOSTS=localhost` a `vendor/OpenWA/.env`: la excepción es solo para `localhost` y la protección sigue activa para el resto.
+- **Firma.** La app recrea el webhook al arrancar con el secreto de `.env` (OpenWA no permite leer el secreto guardado) y verifica `X-OpenWA-Signature` con comparación de tiempo constante sobre el cuerpo crudo.
+- **Quién puede hablar con el agente.** Solo números de `WHATSAPP_ALLOWLIST` (lista vacía = nadie). La primera conversación de un número empieza solo con la frase de activación. Con `RESOLVE_LID_TO_PHONE=true` OpenWA agrega el número real cuando WhatsApp oculta el remitente tras un id de privacidad.
+- **Respuesta rápida al webhook.** La app responde 200 de inmediato y procesa el turno en segundo plano (OpenWA espera como máximo 10 s y la IA puede tardar más).
+- **Sin ciclos con la UI.** El estado de WhatsApp se publica por SSE solo cuando cambia, y la sincronización con OpenWA se hace como máximo cada 10 s (un primer diseño provocaba un ciclo evento → consulta → evento y OpenWA respondía 429).

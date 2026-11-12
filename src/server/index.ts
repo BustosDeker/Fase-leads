@@ -12,6 +12,8 @@ import { rutasEventos } from './eventos.js';
 import { rutasTablero } from './rutas-tablero.js';
 import { rutasLeads } from './rutas-leads.js';
 import { rutasAgente } from './rutas-agente.js';
+import { rutasWhatsApp } from './rutas-whatsapp.js';
+import { resumenEstado as estadoWhatsApp } from '../whatsapp/openwa.js';
 import { estadoAgente } from '../agente/motor.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
 
@@ -42,14 +44,14 @@ app.get('/api/salud', async () => {
   } catch (err) {
     sqlServer.error = explicarErrorSql(err);
   }
-  // WhatsApp/OpenWA se integra en la etapa E6.
-  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: estadoAgente(), whatsapp: { estado: 'NO_CONFIGURADO' } };
+  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: estadoAgente(), whatsapp: estadoWhatsApp() };
 });
 
 rutasEventos(app);
 rutasTablero(app);
 rutasLeads(app);
 rutasAgente(app);
+rutasWhatsApp(app);
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');

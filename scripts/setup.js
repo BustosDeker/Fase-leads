@@ -91,14 +91,26 @@ if (SIN_OPENWA || /^false$/i.test(leerVar('OPENWA_ENABLED'))) {
       fs.copyFileSync(path.join(OPENWA_DIR, '.env.minimal'), owEnv);
       ok('vendor/OpenWA/.env creado desde .env.minimal (SQLite, sin Redis ni Docker)');
     }
+    // Ajustes para la app: el webhook va a localhost (la protección SSRF de OpenWA sigue activa para todo lo demás)
+    // y la sesión vinculada se reconecta sola al reiniciar.
+    let owTexto = fs.readFileSync(owEnv, 'utf8');
+    const fijar = (clave, valor) => {
+      const linea = `${clave}=${valor}`;
+      owTexto = new RegExp(`^${clave}=.*$`, 'm').test(owTexto) ? owTexto.replace(new RegExp(`^${clave}=.*$`, 'm'), linea) : owTexto.trimEnd() + '\n' + linea + '\n';
+    };
+    fijar('SSRF_ALLOWED_HOSTS', 'localhost');
+    fijar('AUTO_START_SESSIONS', 'true');
+    fijar('RESOLVE_LID_TO_PHONE', 'true');   // remitentes @lid: OpenWA agrega senderPhone (lo usa la lista de números permitidos)
+    fs.writeFileSync(owEnv, owTexto);
+    ok('vendor/OpenWA/.env: webhook a localhost permitido y reconexión automática');
     if (!fs.existsSync(path.join(OPENWA_DIR, 'node_modules'))) {
       console.log('  Instalando OpenWA (descarga Chromium para whatsapp-web.js; puede tardar varios minutos)…');
       if (!ejecutar('npm', ['ci', '--no-audit', '--no-fund'], OPENWA_DIR)) aviso('Falló `npm ci` en vendor/OpenWA.');
     } else ok('dependencias de OpenWA ya instaladas');
-    const dash = path.join(OPENWA_DIR, 'dashboard');
-    if (fs.existsSync(path.join(dash, 'package.json')) && !fs.existsSync(path.join(dash, 'node_modules'))) {
-      if (!ejecutar('npm', ['ci', '--no-audit', '--no-fund'], dash)) aviso('Falló `npm ci` del dashboard de OpenWA.');
-    }
+    if (!fs.existsSync(path.join(OPENWA_DIR, 'dist', 'main.js'))) {
+      if (!ejecutar('npm', ['run', 'build'], OPENWA_DIR)) aviso('Falló la compilación de OpenWA (`npm run build`).');
+      else ok('OpenWA compilado');
+    } else ok('OpenWA ya compilado');
   }
 }
 

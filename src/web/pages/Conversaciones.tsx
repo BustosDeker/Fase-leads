@@ -7,6 +7,7 @@ import { api } from '../api';
 import { fechaHora } from '../formato';
 import { useLiveEvents } from '../hooks/useLiveEvents';
 import { Aviso, Bloque, BuscadorLead, Chip, ChipEstado, Encabezado } from '../components/ui';
+import { ConexionWhatsApp } from '../components/ConexionWhatsApp';
 
 type F = Record<string, any>;
 const NOMBRE_HERRAMIENTA: Record<string, string> = {
@@ -47,6 +48,7 @@ export function Conversaciones() {
           {estado.data.proveedor !== 'mock' ? ` · ${estado.data.modelo}` : ''}</Chip>}
       </Encabezado>
       {estado.data?.aviso && <Aviso tipo="info">{estado.data.aviso}</Aviso>}
+      <ConexionWhatsApp />
       {nueva.isError && <Aviso>{(nueva.error as Error).message}</Aviso>}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[340px_1fr]">

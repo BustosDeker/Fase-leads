@@ -40,6 +40,9 @@ function Indicador({ etiqueta, ok, texto }: { etiqueta: string; ok: boolean | nu
   );
 }
 
+const ETIQUETA_WA: Record<string, string> = { CONECTADO: 'Conectado', NO_CONFIGURADO: 'No configurado', SIN_CONEXION: 'OpenWA apagado',
+  DESCONECTADO: 'Desconectado', CONECTANDO: 'Conectando…', ESPERANDO_QR: 'Esperando QR', ERROR: 'Con error' };
+
 export function Layout({ children }: { children: ReactNode }) {
   const [abierto, setAbierto] = useState(false);
   const { pathname } = useLocation();
@@ -47,7 +50,10 @@ export function Layout({ children }: { children: ReactNode }) {
   // El tablero NO se refresca: lee del data mart y solo cambia al ejecutar el ETL.
   const cliente = useQueryClient();
   const DEL_MART = ['kpis', 'reporte', 'tendencia', 'acciones', 'filtros', 'etl'];
-  useLiveEvents({ oltp: () => cliente.invalidateQueries({ predicate: (q) => !DEL_MART.includes(String(q.queryKey[0])) }) });
+  useLiveEvents({
+    oltp: () => cliente.invalidateQueries({ predicate: (q) => !DEL_MART.includes(String(q.queryKey[0])) }),
+    whatsapp: () => cliente.invalidateQueries({ queryKey: ['salud'] }),
+  });
   const salud = useQuery({ queryKey: ['salud'], queryFn: () => api.get<Salud>('/api/salud'), refetchInterval: 30_000 });
   const sqlOk = salud.data ? salud.data.sqlServer.ok : salud.isError ? false : null;
   const wa = salud.data?.whatsapp.estado;
@@ -105,7 +111,7 @@ export function Layout({ children }: { children: ReactNode }) {
 
         <div className={`${abierto ? 'block' : 'hidden'} md:block space-y-2 border-t border-white/10 px-5 py-4`}>
           <Indicador etiqueta="WhatsApp" ok={wa === 'CONECTADO' ? true : wa ? null : null}
-            texto={wa === 'CONECTADO' ? 'Conectado' : wa === 'NO_CONFIGURADO' ? 'No configurado' : (wa ?? '…')} />
+            texto={wa ? (ETIQUETA_WA[wa] ?? wa) : '…'} />
           <Indicador etiqueta="SQL Server" ok={sqlOk} texto={sqlOk === null ? '…' : sqlOk ? 'Conectado' : 'Sin conexión'} />
         </div>
       </aside>
