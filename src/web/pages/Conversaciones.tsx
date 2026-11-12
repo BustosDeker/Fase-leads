@@ -77,6 +77,36 @@ export function Conversaciones() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[340px_1fr]">
         <div className="flex flex-col gap-5">
+          <Bloque titulo="Escribir primero por WhatsApp" origen="El agente envía el primer mensaje a un lead desde el número vinculado y luego continúa la conversación">
+            <BuscadorLead placeholder="Buscar lead con WhatsApp…" alElegir={setLeadWhatsApp} />
+            {leadWhatsApp && (
+              <div className="mt-3 flex flex-col gap-2 rounded-lg border border-linea p-3">
+                <p className="text-sm font-medium">{leadWhatsApp.nombres} {leadWhatsApp.apellidos}</p>
+                <p className="nota">{leadWhatsApp.whatsapp ? `WhatsApp: +${leadWhatsApp.whatsapp}` : 'No tiene número de WhatsApp registrado.'}</p>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-1" checked={!!leadWhatsApp.whatsapp_habilitado}
+                    disabled={activarWhatsApp.isPending || (!leadWhatsApp.whatsapp_habilitado
+                      && (!leadWhatsApp.whatsapp || !leadWhatsApp.consentimiento_contacto || leadWhatsApp.no_contactar))}
+                    onChange={(e) => activarWhatsApp.mutate({ leadId: leadWhatsApp.lead_id, habilitado: e.target.checked })} />
+                  <span>Habilitar WhatsApp para este lead</span>
+                </label>
+                {!leadWhatsApp.consentimiento_contacto || leadWhatsApp.no_contactar
+                  ? <p className="nota text-regular-texto">Se necesita consentimiento vigente del contacto.</p>
+                  : null}
+                {activarWhatsApp.isError && <Aviso>{(activarWhatsApp.error as Error).message}</Aviso>}
+                <button className="boton-negro" disabled={!leadWhatsApp.whatsapp_habilitado || iniciar.isPending}
+                  onClick={() => {
+                    if (leadWhatsApp.whatsapp && window.confirm(`¿Enviar el primer mensaje a ${leadWhatsApp.nombres} ${leadWhatsApp.apellidos} (…${leadWhatsApp.whatsapp.slice(-4)}) por WhatsApp?`))
+                      iniciar.mutate(leadWhatsApp.lead_id);
+                  }}>Iniciar conversación</button>
+              </div>
+            )}
+            <p className="nota mt-2">Requisitos: WhatsApp conectado, número registrado, permiso activado para este lead y consentimiento vigente.</p>
+            {iniciar.isPending && <p className="nota mt-2">Enviando…</p>}
+            {iniciar.isError && <div className="mt-2"><Aviso>{(iniciar.error as Error).message}</Aviso></div>}
+            {iniciar.data && <div className="mt-2"><Aviso tipo="ok">Mensaje enviado a {iniciar.data.enviadoA}. Cuando responda, el agente continúa.</Aviso></div>}
+          </Bloque>
+
           <Bloque titulo="Bandeja" origen={`${visibles.length} de ${(lista.data ?? []).length} conversaciones`}
             accion={activos > 0 ? <button type="button" className="text-sm font-semibold underline-offset-2 hover:underline" onClick={limpiar}>✕ Limpiar</button> : undefined}>
             <div className="flex flex-col gap-2">
@@ -129,36 +159,6 @@ export function Conversaciones() {
               <p className="nota">Se registra como dato de prueba. O continúa con un lead existente:</p>
               <BuscadorLead alElegir={(r) => nueva.mutate({ leadId: r.lead_id })} placeholder="Buscar lead existente…" />
             </form>
-          </Bloque>
-
-          <Bloque titulo="Escribir primero por WhatsApp" origen="El agente envía el primer mensaje a un lead desde el número vinculado y luego continúa la conversación">
-            <BuscadorLead placeholder="Buscar lead con WhatsApp…" alElegir={setLeadWhatsApp} />
-            {leadWhatsApp && (
-              <div className="mt-3 flex flex-col gap-2 rounded-lg border border-linea p-3">
-                <p className="text-sm font-medium">{leadWhatsApp.nombres} {leadWhatsApp.apellidos}</p>
-                <p className="nota">{leadWhatsApp.whatsapp ? `WhatsApp: +${leadWhatsApp.whatsapp}` : 'No tiene número de WhatsApp registrado.'}</p>
-                <label className="flex items-start gap-2 text-sm">
-                  <input type="checkbox" className="mt-1" checked={!!leadWhatsApp.whatsapp_habilitado}
-                    disabled={activarWhatsApp.isPending || (!leadWhatsApp.whatsapp_habilitado
-                      && (!leadWhatsApp.whatsapp || !leadWhatsApp.consentimiento_contacto || leadWhatsApp.no_contactar))}
-                    onChange={(e) => activarWhatsApp.mutate({ leadId: leadWhatsApp.lead_id, habilitado: e.target.checked })} />
-                  <span>Habilitar WhatsApp para este lead</span>
-                </label>
-                {!leadWhatsApp.consentimiento_contacto || leadWhatsApp.no_contactar
-                  ? <p className="nota text-regular-texto">Se necesita consentimiento vigente del contacto.</p>
-                  : null}
-                {activarWhatsApp.isError && <Aviso>{(activarWhatsApp.error as Error).message}</Aviso>}
-                <button className="boton-negro" disabled={!leadWhatsApp.whatsapp_habilitado || iniciar.isPending}
-                  onClick={() => {
-                    if (leadWhatsApp.whatsapp && window.confirm(`¿Enviar el primer mensaje a ${leadWhatsApp.nombres} ${leadWhatsApp.apellidos} (…${leadWhatsApp.whatsapp.slice(-4)}) por WhatsApp?`))
-                      iniciar.mutate(leadWhatsApp.lead_id);
-                  }}>Iniciar conversación</button>
-              </div>
-            )}
-            <p className="nota mt-2">Requisitos: WhatsApp conectado, número registrado, permiso activado para este lead y consentimiento vigente.</p>
-            {iniciar.isPending && <p className="nota mt-2">Enviando…</p>}
-            {iniciar.isError && <div className="mt-2"><Aviso>{(iniciar.error as Error).message}</Aviso></div>}
-            {iniciar.data && <div className="mt-2"><Aviso tipo="ok">Mensaje enviado a {iniciar.data.enviadoA}. Cuando responda, el agente continúa.</Aviso></div>}
           </Bloque>
 
         </div>

@@ -31,10 +31,10 @@ export function Fase() {
 // ------------------------------------------------------------------ BUYERS
 function Buyers() {
   const navegar = useNavigate();
-  const [f, setF] = useState({ nombres: '', apellidos: '', whatsapp: '', canal: 'Instagram', universidad: '', carrera: '', etapa: '', evidencia: 'Aceptó la política de datos en el formulario' });
+  const [f, setF] = useState({ nombres: '', apellidos: '', whatsapp: '', canal: 'Instagram', evidencia: 'Aceptó la política de datos en el formulario' });
   const crear = useMutation({ mutationFn: () => api.post<F>('/api/simulador/buyers', {
-    nombres: f.nombres, apellidos: f.apellidos, whatsapp: f.whatsapp, canal: f.canal || undefined, universidad: f.universidad || undefined,
-    carrera: f.carrera || undefined, etapa: f.etapa || undefined, consentimiento: { otorgado: true, evidencia: f.evidencia } }) });
+    nombres: f.nombres, apellidos: f.apellidos, whatsapp: f.whatsapp, canal: f.canal || undefined,
+    consentimiento: { otorgado: true, evidencia: f.evidencia } }) });
   const campo = (k: keyof typeof f, etiqueta: string, extra: F = {}) => (
     <label><span className="etiqueta-campo">{etiqueta}</span><input className="campo" value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} {...extra} /></label>);
   return (
@@ -45,7 +45,7 @@ function Buyers() {
           <ul className="flex flex-col gap-1 text-sm text-tinta-2">
             <li>• Idempotente por número de WhatsApp: reenviar el mismo lead no lo duplica.</li>
             <li>• Crea contacto, buyer, lead y oportunidad «Abierta», y guarda el consentimiento en el historial con medio BUYERS.</li>
-            <li>• Si llega universidad, carrera y etapa reconocibles, se registra también el perfil académico.</li>
+            <li>• BUYERS solo aporta nombre, WhatsApp, canal y consentimiento; universidad, carrera, etapa y demás datos los obtiene el agente en la conversación.</li>
             <li>• Cuando ese estudiante escriba por WhatsApp, el agente continúa sobre su oportunidad sin volver a pedir el consentimiento ni la frase de activación.</li>
           </ul>
         </Bloque>
@@ -56,12 +56,6 @@ function Buyers() {
             {campo('whatsapp', 'WhatsApp (con 51)', { required: true, inputMode: 'numeric', placeholder: '51987654321' })}
             {campo('canal', 'Canal de captación', { list: 'canales' })}
             <datalist id="canales"><option>Instagram</option><option>TikTok</option><option>Facebook</option><option>Referidos</option><option>Convenio universitario</option></datalist>
-            {campo('universidad', 'Universidad (opcional)', { placeholder: 'UNT, UPAO, UCV…' })}
-            {campo('carrera', 'Carrera (opcional)')}
-            <label><span className="etiqueta-campo">Etapa (opcional)</span>
-              <select className="campo" value={f.etapa} onChange={(e) => setF({ ...f, etapa: e.target.value })}>
-                <option value="">—</option><option value="CICLO_IX">IX ciclo</option><option value="CICLO_X">X ciclo</option><option value="EGRESADO">Egresado</option><option value="BACHILLER">Bachiller</option>
-              </select></label>
             {campo('evidencia', 'Evidencia del consentimiento', { required: true })}
             <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
               <button className="boton-negro" disabled={crear.isPending}>Enviar lead a LEADS</button>

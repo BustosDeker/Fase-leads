@@ -34,8 +34,10 @@ async function guardarFechaLimiteDiagnostico(tx: sql.Transaction, cx: ContextoAg
   await new sql.Request(tx).input('l', sql.Int, leadId).input('o', sql.Int, oportunidadId)
     .input('f', sql.Date, fechaLimite).input('p', sql.Decimal(10, 2), cx.preferencias?.presupuesto ?? null)
     .input('d', sql.VarChar(150), cx.preferencias?.disponibilidad ?? null).query(`
-      INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, presupuesto_orientativo, disponibilidad, completo)
+      INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, presupuesto_orientativo, disponibilidad, nivel_confianza, necesidad_acompanamiento, completo)
       SELECT @l, @o, ISNULL(MAX(version), 0) + 1, @f, @p, @d,
+        (SELECT TOP 1 x.nivel_confianza FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC),
+        (SELECT TOP 1 x.necesidad_acompanamiento FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC),
         CASE WHEN @f IS NOT NULL AND @d IS NOT NULL THEN 1 ELSE 0 END
       FROM dbo.PERFIL_NEGOCIACION WITH (UPDLOCK, HOLDLOCK) WHERE oportunidad_id = @o`);
 }
@@ -244,7 +246,7 @@ export const HERRAMIENTAS = {
   registrar_perfil_academico: h({
     def: { nombre: 'registrar_perfil_academico', descripcion: 'Guarda universidad, carrera y etapa académica del estudiante. Acepta nombres o siglas (p. ej. "UNT", "Ingeniería de Sistemas"). Si no se reconoce alguno, devuelve las opciones atendidas.',
       esquema: objeto({ universidad: { type: 'string' }, carrera: { type: 'string' }, etapa: { type: 'string', enum: ['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER'] },
-        sede: { type: 'string', description: 'Sede/campus indicado por el estudiante.' } }, ['universidad', 'carrera', 'etapa']) },
+        sede: { type: 'string', description: 'Solo si el estudiante la dijo expresamente; si no, omítela. Nunca la deduzcas de la universidad.' } }, ['universidad', 'carrera', 'etapa']) },
     entrada: z.object({ universidad: z.string().min(2).max(150), carrera: z.string().min(2).max(120),
       etapa: z.enum(['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER']), sede: z.string().max(100).optional() }),
     async ejecutar(cx, e) {
@@ -268,18 +270,25 @@ export const HERRAMIENTAS = {
   }),
 
   registrar_preferencias: h({
-    def: { nombre: 'registrar_preferencias', descripcion: 'Guarda (como nueva versión del perfil de negociación) la fecha límite de sustentación o entrega, el presupuesto orientativo en soles y la disponibilidad horaria. La fecha límite influye en recargos por urgencia del motor de precios.',
-      esquema: objeto({ fecha_limite: { type: 'string', description: 'AAAA-MM-DD' }, presupuesto_orientativo: { type: 'number' }, disponibilidad: { type: 'string' } }, []) },
-    entrada: z.object({ fecha_limite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), presupuesto_orientativo: z.number().min(0).max(100000).optional(), disponibilidad: z.string().max(150).optional() }),
+    def: { nombre: 'registrar_preferencias', descripcion: 'Guarda en el perfil de negociación: fecha límite, presupuesto orientativo (S/), disponibilidad, nivel de confianza y necesidad de acompañamiento. La fecha límite influye en recargos por urgencia.',
+      esquema: objeto({ fecha_limite: { type: 'string', description: 'AAAA-MM-DD' }, presupuesto_orientativo: { type: 'number' }, disponibilidad: { type: 'string' },
+        nivel_confianza: { type: 'integer', minimum: 1, maximum: 5, description: 'Confianza del estudiante en contratar (1 baja, 5 alta), según el tono de sus respuestas.' },
+        necesidad_acompanamiento: { type: 'string', description: 'Dificultad o apoyo que busca (tiempo, metodología, estadística, redacción…).' } }, []) },
+    entrada: z.object({ fecha_limite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), presupuesto_orientativo: z.number().min(0).max(100000).optional(), disponibilidad: z.string().max(150).optional(),
+      nivel_confianza: z.number().int().min(1).max(5).optional(), necesidad_acompanamiento: z.string().trim().min(2).max(300).optional() }),
     async ejecutar(cx, e) {
       const { oportunidadId, leadId } = exigirOportunidad(cx);
       await enTransaccion(await oltp(), async (tx) => {
         await new sql.Request(tx).input('l', sql.Int, leadId).input('o', sql.Int, oportunidadId)
           .input('f', sql.Date, e.fecha_limite ?? cx.preferencias?.fechaLimite ?? null)
           .input('p', sql.Decimal(10, 2), e.presupuesto_orientativo ?? cx.preferencias?.presupuesto ?? null)
-          .input('d', sql.VarChar, (e.disponibilidad ?? cx.preferencias?.disponibilidad ?? null)?.slice(0, 150) ?? null).query(`
-          INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, presupuesto_orientativo, disponibilidad, completo)
-          SELECT @l, @o, ISNULL(MAX(version), 0) + 1, @f, @p, @d, CASE WHEN @f IS NOT NULL AND @d IS NOT NULL THEN 1 ELSE 0 END
+          .input('d', sql.VarChar, (e.disponibilidad ?? cx.preferencias?.disponibilidad ?? null)?.slice(0, 150) ?? null)
+          .input('n', sql.TinyInt, e.nivel_confianza ?? null).input('na', sql.VarChar(300), e.necesidad_acompanamiento ?? null).query(`
+          INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, presupuesto_orientativo, disponibilidad, nivel_confianza, necesidad_acompanamiento, completo)
+          SELECT @l, @o, ISNULL(MAX(version), 0) + 1, @f, @p, @d,
+            ISNULL(@n, (SELECT TOP 1 x.nivel_confianza FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC)),
+            ISNULL(@na, (SELECT TOP 1 x.necesidad_acompanamiento FROM dbo.PERFIL_NEGOCIACION x WHERE x.oportunidad_id = @o ORDER BY x.version DESC, x.perfil_negociacion_id DESC)),
+            CASE WHEN @f IS NOT NULL AND @d IS NOT NULL THEN 1 ELSE 0 END
           FROM dbo.PERFIL_NEGOCIACION WITH (UPDLOCK, HOLDLOCK) WHERE oportunidad_id = @o`);
         await registrarEvento(tx, oportunidadId, 'PERFIL_NEGOCIACION_ACTUALIZADO', 'AGENTE', JSON.stringify(e).slice(0, 300));
       });
@@ -288,10 +297,10 @@ export const HERRAMIENTAS = {
   }),
 
   solicitar_diagnostico: h({
-    def: { nombre: 'solicitar_diagnostico', descripcion: 'Registra el diagnóstico solo cuando el estudiante haya indicado explícitamente un tema, tipo de tesis, avance, si tiene empresa/institución, fecha de entrega o que aún no está definida, y limitaciones (o que no tiene). Nunca infieras datos ni uses datos de universidad/carrera como tema. Guarda la fecha límite y los datos del diagnóstico en una sola transacción.',
+    def: { nombre: 'solicitar_diagnostico', descripcion: 'Registra el diagnóstico con tema (o «Por definir (línea: …)»), tipo de tesis, avance, empresa/institución, fecha de entrega (estimada si la confirmó) y limitaciones. Nunca infieras datos ni uses universidad/carrera como tema.',
       esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO'] },
         avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' },
-        fecha_limite: { type: ['string', 'null'], description: 'Fecha AAAA-MM-DD; null solo si el estudiante dijo que aún no la tiene definida.' },
+        fecha_limite: { type: ['string', 'null'], description: 'Fecha AAAA-MM-DD (puede ser una fecha estimada confirmada por el estudiante). Evita null: sin fecha no se puede entregar el diagnóstico.' },
         limitaciones: { type: 'string', description: 'Limitaciones declaradas o "Ninguna indicada".' } },
       ['tema_tesis', 'tipo_tesis', 'avance_declarado', 'tiene_empresa_aplicacion', 'fecha_limite', 'limitaciones']) },
     entrada: z.object({ tema_tesis: z.string().min(3).max(250),
@@ -308,14 +317,14 @@ export const HERRAMIENTAS = {
         return solicitarDiagnostico(tx, { oportunidadId, temaTesis: e.tema_tesis, tipoTesis: e.tipo_tesis,
           avanceDeclarado: e.avance_declarado, tieneEmpresaAplicacion: e.tiene_empresa_aplicacion, limitaciones: e.limitaciones }, null, 'AGENTE');
       });
-      return { ok: true, diagnosticoId: r.diagnostico_id, plazo: 'máximo 48 horas', siguiente: 'Un especialista revisa y entrega el diagnóstico; luego se cotiza.' };
+      return { ok: true, diagnosticoId: r.diagnostico_id, siguiente: 'Entrega ahora el diagnóstico con entregar_diagnostico y luego verifica con calificar_aptitud, en este mismo turno.' };
     },
   }),
   actualizar_diagnostico_pendiente: h({
-    def: { nombre: 'actualizar_diagnostico_pendiente', descripcion: 'Completa un diagnóstico pendiente con el tema explícito, tipo de tesis, avance, empresa/institución, fecha límite (o null si el estudiante confirmó que no está definida) y limitaciones declaradas. Nunca inventes ni uses universidad/carrera como tema; pregunta por cualquier dato faltante.',
+    def: { nombre: 'actualizar_diagnostico_pendiente', descripcion: 'Completa un diagnóstico pendiente (mismos datos que solicitar_diagnostico). Nunca inventes datos; pregunta lo que falte.',
       esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO'] },
         avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' },
-        fecha_limite: { type: ['string', 'null'], description: 'Fecha AAAA-MM-DD o null si confirmó que no está definida.' },
+        fecha_limite: { type: ['string', 'null'], description: 'Fecha AAAA-MM-DD (puede ser una fecha estimada confirmada por el estudiante). Evita null: sin fecha no se puede entregar el diagnóstico.' },
         limitaciones: { type: 'string', description: 'Limitaciones declaradas o "Ninguna indicada".' } },
       ['tema_tesis', 'tipo_tesis', 'avance_declarado', 'tiene_empresa_aplicacion', 'fecha_limite', 'limitaciones']) },
     entrada: z.object({ tema_tesis: z.string().min(3).max(250),
@@ -341,7 +350,7 @@ export const HERRAMIENTAS = {
         if (!r.recordset[0]) throw new ErrorNegocio('El diagnóstico ya no está pendiente o no pertenece a esta oportunidad.');
         await registrarEvento(tx, oportunidadId, 'DIAGNOSTICO_ACTUALIZADO', 'AGENTE', `Se completó la información del tema: ${tema.slice(0, 250)}`);
       });
-      return { ok: true, diagnosticoId: cx.diagnostico.id, siguiente: 'La solicitud sigue pendiente de revisión por el especialista.' };
+      return { ok: true, diagnosticoId: cx.diagnostico.id, siguiente: 'Entrega ahora el diagnóstico con entregar_diagnostico y luego verifica con calificar_aptitud.' };
     },
   }),
 
@@ -485,6 +494,46 @@ export const HERRAMIENTAS = {
     },
   }),
 
+  registrar_responsable_pago: h({
+    def: { nombre: 'registrar_responsable_pago', descripcion: 'Registra quién pagará y si participa en la decisión. Solo si el estudiante lo dice; no pidas datos de pago.',
+      esquema: objeto({ tipo_responsable: { type: 'string', enum: ['ESTUDIANTE', 'FAMILIAR', 'EMPRESA', 'OTRO'] },
+        relacion: { type: 'string', description: 'Relación con el estudiante: Madre, Padre, Pareja, Empleador…' },
+        nombre: { type: 'string', description: 'Nombre de la persona, si lo dio.' }, participa_decision: { type: 'boolean', description: 'true si esa persona participa en la decisión de contratar.' } },
+        ['tipo_responsable', 'participa_decision']) },
+    entrada: z.object({ tipo_responsable: z.enum(['ESTUDIANTE', 'FAMILIAR', 'EMPRESA', 'OTRO']), relacion: z.string().trim().max(50).optional(),
+      nombre: z.string().trim().max(150).optional(), participa_decision: z.boolean() }),
+    async ejecutar(cx, e) {
+      const { oportunidadId, leadId } = exigirOportunidad(cx);
+      const propio = e.tipo_responsable === 'ESTUDIANTE';
+      const relacion = e.relacion ?? (propio ? 'Propio' : null);
+      const nombre = e.nombre ?? (propio ? `${cx.nombres} ${cx.apellidos}`.trim() : null);
+      await enTransaccion(await oltp(), async (tx) => {
+        const rq = () => new sql.Request(tx).input('l', sql.Int, leadId).input('t', sql.VarChar(30), e.tipo_responsable).input('r', sql.VarChar(50), relacion)
+          .input('s', sql.VarChar(50), e.tipo_responsable === 'EMPRESA' ? 'Corporativo' : 'Personal').input('n', sql.VarChar(150), nombre).input('p', sql.Bit, e.participa_decision);
+        const act = await rq().query(`UPDATE dbo.RESPONSABLE_PAGO SET tipo_responsable = @t, tipo_relacion = @r, segmento = @s, nombre = @n, participa_decision = @p
+          WHERE responsable_pago_id = (SELECT TOP 1 responsable_pago_id FROM dbo.RESPONSABLE_PAGO WHERE lead_id = @l ORDER BY responsable_pago_id DESC)`);
+        if (!act.rowsAffected[0]) await rq().query(`INSERT dbo.RESPONSABLE_PAGO (lead_id, tipo_responsable, tipo_relacion, segmento, nombre, participa_decision) VALUES (@l, @t, @r, @s, @n, @p)`);
+        await registrarEvento(tx, oportunidadId, 'RESPONSABLE_PAGO_REGISTRADO', 'AGENTE', `${e.tipo_responsable}${relacion ? ` · ${relacion}` : ''}${e.participa_decision ? ' · participa en la decisión' : ''}`);
+      });
+      return { ok: true };
+    },
+  }),
+
+  cerrar_oportunidad: h({
+    def: { nombre: 'cerrar_oportunidad', descripcion: 'Cierra la oportunidad cuando el estudiante confirma que ya no quiere continuar, tras ofrecerle una alternativa. No la uses por dudas, objeciones o «lo voy a pensar».',
+      esquema: objeto({ motivo: { type: 'string', enum: ['NO_INTERESADO', 'PRECIO', 'ENCONTRO_OTRA_OPCION', 'SIN_TIEMPO_O_YA_NO_NECESITA', 'OTRO'] },
+        detalle: { type: 'string', description: 'Lo que dijo el estudiante, resumido.' } }, ['motivo']) },
+    entrada: z.object({ motivo: z.enum(['NO_INTERESADO', 'PRECIO', 'ENCONTRO_OTRA_OPCION', 'SIN_TIEMPO_O_YA_NO_NECESITA', 'OTRO']), detalle: z.string().trim().max(300).optional() }),
+    async ejecutar(cx, e) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      if (!['ABIERTA', 'EN_DIAGNOSTICO', 'APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(cx.estado ?? '')) {
+        return { ok: false, error: `La oportunidad está en ${cx.estado ?? 'sin estado'} y no se puede cerrar desde la conversación.` };
+      }
+      await enTransaccion(await oltp(), (tx) => transicionar(tx, oportunidadId, 'DESCARTADA', 'AGENTE', `Motivo: ${e.motivo}${e.detalle ? ` · ${e.detalle}` : ''}`.slice(0, 300)));
+      return { ok: true, nota: 'Despídete con cordialidad, deja la puerta abierta y no insistas.' };
+    },
+  }),
+
   consultar_horarios: h({
     def: { nombre: 'consultar_horarios', descripcion: 'Devuelve hasta 5 horarios libres (45 min, días hábiles de 9:00 a 19:00) del asesor comercial para una cita virtual OPCIONAL.', esquema: objeto({}, []) },
     entrada: z.object({}).passthrough(),
@@ -600,7 +649,7 @@ export async function ejecutarHerramienta(cx: ContextoAgente, nombre: string, en
     // Mantiene el contexto al día dentro del mismo turno (p. ej. tras otorgar consentimiento).
     if (ok && ['registrar_consentimiento', 'registrar_perfil_academico', 'solicitar_diagnostico', 'actualizar_diagnostico_pendiente',
       'entregar_diagnostico', 'calificar_aptitud',
-      'presentar_propuesta', 'registrar_respuesta_propuesta', 'agendar_cita', 'cancelar_cita', 'reprogramar_cita'].includes(nombre)) {
+      'presentar_propuesta', 'registrar_respuesta_propuesta', 'cerrar_oportunidad', 'agendar_cita', 'cancelar_cita', 'reprogramar_cita'].includes(nombre)) {
       const { cargarContexto } = await import('./contexto.js');
       Object.assign(cx, await cargarContexto(cx.conversacionId));
     }
