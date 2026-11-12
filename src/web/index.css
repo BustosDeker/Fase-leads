@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { font-family: 'Inter', system-ui, sans-serif; font-feature-settings: 'tnum' 1, 'cv11' 1; }
+  body { background: #F4F4F1; }
+  :focus-visible { outline: 2px solid #0B0B0B; outline-offset: 2px; }
+}
+
+@layer components {
+  .tarjeta { @apply bg-white border border-linea rounded-tarjeta; }
+  .boton { @apply inline-flex items-center justify-center gap-2 min-h-[44px] px-4 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed; }
+  .boton-negro { @apply boton bg-tinta text-white hover:bg-tinta-2; }
+  .boton-claro { @apply boton bg-white text-tinta border border-linea-fuerte hover:bg-fondo; }
+  .campo { @apply min-h-[44px] w-full rounded-lg border border-linea-fuerte bg-white px-3 text-sm text-tinta; }
+  .etiqueta-campo { @apply block text-xs font-medium text-tinta-3 mb-1; }
+  .titulo-seccion { @apply text-base font-semibold text-tinta; }
+  .nota { @apply text-xs text-tinta-3; }
+}
+
+/* Exportar a PDF = imprimir solo el reporte marcado (el navegador guarda como PDF). */
+@media print {
+  body * { visibility: hidden; }
+  .imprimible, .imprimible * { visibility: visible; }
+  .imprimible { position: absolute; inset: 0 auto auto 0; width: 100%; border: none; }
+  .no-imprimir { display: none !important; }
+}
