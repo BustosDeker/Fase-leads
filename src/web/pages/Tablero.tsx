@@ -12,22 +12,22 @@ import { BotonEtl, FranjaEtl, useEstadoEtl } from '../components/EtlRunner';
 import { KpiCard } from '../components/KpiCard';
 import { ReporteDimension } from '../components/ReporteDimension';
 import { TendenciaChart } from '../components/TendenciaChart';
-import { fechaHoraCorta } from '../formato';
+import { etiquetaPeriodo, fechaHoraCorta } from '../formato';
+import { BarraFiltros, Chip, SelectFiltro, useFiltros } from '../components/ui';
 
-interface Filtros { desde: string; hasta: string; grupoEtapa: string; canal: string; asesor: string }
-const VACIOS: Filtros = { desde: '', hasta: '', grupoEtapa: '', canal: '', asesor: '' };
 
 export function Tablero() {
-  const [f, setF] = useState<Filtros>(VACIOS);
+  // Filtros en la URL: el enlace del tablero filtrado se puede compartir.
+  const { f, fijar, activos, limpiar } = useFiltros({ desde: '', hasta: '', grupoEtapa: '', canal: '', asesor: '' });
   const [kpiTendencia, setKpiTendencia] = useState<CodigoKpi>('K1');
-  const filtros = useMemo(() => Object.fromEntries(Object.entries(f).filter(([, v]) => v)) as Record<string, string>, [f]);
+  const filtros = useMemo(() => Object.fromEntries(Object.entries(f).filter(([, v]) => v)) as Record<string, string>,
+    [f.desde, f.hasta, f.grupoEtapa, f.canal, f.asesor]);
   const etl = useEstadoEtl();
   const opciones = useQuery({ queryKey: ['filtros'], queryFn: () => api.get<OpcionesFiltros>('/api/tablero/filtros') });
   const kpis = useQuery({ queryKey: ['kpis', filtros], queryFn: () => api.get<Kpis>('/api/tablero/kpis', filtros) });
   const ok = etl.data?.ultimaOk;
   const simulados = (ok?.oportunidades_demo ?? 0) > 0;
   const plazos = kpis.data?.plazos;
-  const hayFiltros = Object.keys(filtros).length > 0;
 
   return (
     <div className="mx-auto flex max-w-[1400px] flex-col gap-5">
@@ -50,39 +50,34 @@ export function Tablero() {
 
       <FranjaEtl />
 
-      {/* Filtros (una fila) y plazos de medición */}
-      <section className="tarjeta no-imprimir p-4" aria-label="Filtros">
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          <div className="col-span-2 md:col-span-1">
+      {/* Filtros y plazos de medición */}
+      <div className="no-imprimir">
+        <BarraFiltros activos={activos} alLimpiar={limpiar}
+          resultado={<span className="nota">Plazos de medición: diagnóstico {plazos?.wdHoras ?? 48} h · cotización {plazos?.wqHoras ?? 2} h ·
+            aceptación {plazos?.waDias ?? 30} días · recuperación de objeciones {plazos?.waDias ?? 30} días · conversión a PAYERS {plazos?.wcDias ?? 60} días.
+            La cohorte se aplica a la fecha propia de cada indicador.</span>}>
+          <div>
             <span className="etiqueta-campo">Fecha de corte</span>
             <div className="campo flex items-center overflow-hidden whitespace-nowrap bg-fondo text-tinta-2" title="Se cambia en «Ajustes» del ETL">{fechaHoraCorta(ok?.corte)}</div>
           </div>
           <label><span className="etiqueta-campo">Cohorte desde</span>
-            <input type="month" className="campo" value={f.desde} onChange={(e) => setF({ ...f, desde: e.target.value })} /></label>
+            <input type="month" className={`campo ${f.desde ? 'border-tinta font-medium' : ''}`} value={f.desde} max={f.hasta || undefined} onChange={(e) => fijar({ desde: e.target.value })} /></label>
           <label><span className="etiqueta-campo">Cohorte hasta</span>
-            <input type="month" className="campo" value={f.hasta} onChange={(e) => setF({ ...f, hasta: e.target.value })} /></label>
-          <label><span className="etiqueta-campo">Grupo de etapa</span>
-            <select className="campo" value={f.grupoEtapa} onChange={(e) => setF({ ...f, grupoEtapa: e.target.value })}>
-              <option value="">Todos</option>{opciones.data?.gruposEtapa.map((x) => <option key={x}>{x}</option>)}
-            </select></label>
-          <label><span className="etiqueta-campo">Canal</span>
-            <select className="campo" value={f.canal} onChange={(e) => setF({ ...f, canal: e.target.value })}>
-              <option value="">Todos</option>{opciones.data?.canales.map((x) => <option key={x}>{x}</option>)}
-            </select></label>
-          <label><span className="etiqueta-campo">Asesor</span>
-            <select className="campo" value={f.asesor} onChange={(e) => setF({ ...f, asesor: e.target.value })}>
-              <option value="">Todos</option>{opciones.data?.asesores.map((x) => <option key={x}>{x}</option>)}
-            </select></label>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="nota">
-            Plazos de medición: diagnóstico {plazos?.wdHoras ?? 48} h · cotización {plazos?.wqHoras ?? 2} h ·
-            aceptación {plazos?.waDias ?? 30} días · recuperación de objeciones {plazos?.waDias ?? 30} días · conversión a PAYERS {plazos?.wcDias ?? 60} días.
-            La cohorte se aplica a la fecha propia de cada indicador.
-          </p>
-          {hayFiltros && <button className="boton-claro" onClick={() => setF(VACIOS)}>Quitar filtros</button>}
-        </div>
-      </section>
+            <input type="month" className={`campo ${f.hasta ? 'border-tinta font-medium' : ''}`} value={f.hasta} min={f.desde || undefined} onChange={(e) => fijar({ hasta: e.target.value })} /></label>
+          <SelectFiltro etiqueta="Grupo de etapa" valor={f.grupoEtapa} alCambiar={(v) => fijar({ grupoEtapa: v })} opciones={opciones.data?.gruposEtapa ?? []} />
+          <SelectFiltro etiqueta="Canal" valor={f.canal} alCambiar={(v) => fijar({ canal: v })} opciones={opciones.data?.canales ?? []} />
+          <SelectFiltro etiqueta="Asesor" valor={f.asesor} alCambiar={(v) => fijar({ asesor: v })} opciones={opciones.data?.asesores ?? []} />
+        </BarraFiltros>
+        {activos > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" aria-label="Filtros aplicados">
+            <span className="nota">Filtrando por:</span>
+            {(Object.keys({"desde":"Desde","hasta":"Hasta","grupoEtapa":"Etapa","canal":"Canal","asesor":"Asesor"}) as (keyof typeof f)[]).filter((k) => f[k]).map((k) => (
+              <button key={k} type="button" onClick={() => fijar({ [k]: '' })} title="Quitar este filtro"
+                className="rounded-full focus-visible:outline-2"><Chip>{{"desde":"Desde","hasta":"Hasta","grupoEtapa":"Etapa","canal":"Canal","asesor":"Asesor"}[k]}: {k === 'desde' || k === 'hasta' ? etiquetaPeriodo(f[k]) : f[k]} ✕</Chip></button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {kpis.isError && <div role="alert" className="tarjeta border-malo-marca bg-malo-fondo p-4 text-sm text-malo-texto">■ {(kpis.error as Error).message}</div>}
 

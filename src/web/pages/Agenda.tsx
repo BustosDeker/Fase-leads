@@ -22,10 +22,15 @@ export function Agenda() {
   const cliente = useQueryClient();
   const [inicioSemana, setInicioSemana] = useState(() => lunes(new Date()));
   const [asesor, setAsesor] = useState('');
+  const [estadoCita, setEstadoCita] = useState('');
+  const [medio, setMedio] = useState('');
   const fin = new Date(inicioSemana.getTime() + 7 * 86_400_000);
   const q = useQuery({ queryKey: ['agenda', inicioSemana.toISOString()],
     queryFn: () => api.get<Agenda>('/api/agenda', { desde: inicioSemana.toISOString(), hasta: fin.toISOString() }) });
-  const citas = useMemo(() => (q.data?.citas ?? []).filter((c) => !asesor || String(c.asesor_id) === asesor), [q.data, asesor]);
+  const citas = useMemo(() => (q.data?.citas ?? []).filter((c) => (!asesor || String(c.asesor_id) === asesor)
+    && (!estadoCita || c.estado === estadoCita) && (!medio || c.medio === medio)), [q.data, asesor, estadoCita, medio]);
+  const totalSemana = q.data?.citas.length ?? 0;
+  const filtrosActivos = [asesor, estadoCita, medio].filter(Boolean).length;
   const solapadas = citas.filter((c) => c.solapada);
 
   const [nueva, setNueva] = useState({ oportunidadId: opParam ?? 0, asesorId: 0, inicio: aInputLocal(new Date(Date.now() + 86_400_000)), duracionMin: 45, medio: 'Google Meet' });
@@ -52,9 +57,18 @@ export function Agenda() {
 
       <section className="tarjeta flex flex-wrap items-end gap-3 p-4">
         <div className="text-sm font-semibold">Semana del {inicioSemana.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
-        <label className="ml-auto w-full sm:w-72"><span className="etiqueta-campo">Asesor</span>
-          <select className="campo" value={asesor} onChange={(e) => setAsesor(e.target.value)}>
+        <span className="nota">{citas.length} de {totalSemana} citas esta semana</span>
+        <label className="ml-auto w-full sm:w-60"><span className="etiqueta-campo">Asesor</span>
+          <select className={`campo ${asesor ? 'border-tinta font-medium' : ''}`} value={asesor} onChange={(e) => setAsesor(e.target.value)}>
             <option value="">Todos</option>{q.data?.asesores.map((a) => <option key={a.asesor_id} value={a.asesor_id}>{a.nombre}</option>)}</select></label>
+        <label className="w-full sm:w-44"><span className="etiqueta-campo">Estado</span>
+          <select className={`campo ${estadoCita ? 'border-tinta font-medium' : ''}`} value={estadoCita} onChange={(e) => setEstadoCita(e.target.value)}>
+            <option value="">Todos</option>{Object.entries(NOMBRE).map(([v, t]) => <option key={v} value={v}>{t}</option>)}</select></label>
+        <label className="w-full sm:w-48"><span className="etiqueta-campo">Medio</span>
+          <select className={`campo ${medio ? 'border-tinta font-medium' : ''}`} value={medio} onChange={(e) => setMedio(e.target.value)}>
+            <option value="">Todos</option><option>Google Meet</option><option>Zoom</option><option>Llamada de WhatsApp</option></select></label>
+        {filtrosActivos > 0 && <button type="button" className="min-h-[44px] text-sm font-semibold underline-offset-2 hover:underline"
+          onClick={() => { setAsesor(''); setEstadoCita(''); setMedio(''); }}>✕ Limpiar ({filtrosActivos})</button>}
       </section>
 
       {solapadas.length > 0 && <Aviso>{solapadas.length} citas solapadas esta semana (mismo asesor y horario). Revísalas en Auditoría.</Aviso>}
