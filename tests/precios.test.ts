@@ -37,6 +37,15 @@ test('los descuentos acumulados se recortan al tope y se avisa', () => {
   assert.deepEqual(validarLimites(q), []);
 });
 
+test('solo el ajuste negociado que excede el límite bloquea; las reglas automáticas se acotan', () => {
+  const soloReglas = cotizar(tarifa, reglas, { universidad: 'Universidad Nacional de Trujillo', formaPago: 'CONTADO', avance: 80 });
+  assert.equal(soloReglas.descuento, 200);
+  assert.equal(soloReglas.negociadoExcede, false);
+  const conNegociado = cotizar(tarifa, reglas, { descuentoNegociadoPct: 12 });
+  assert.equal(conNegociado.negociadoExcede, true);
+  assert.equal(cotizar(tarifa, reglas, { descuentoNegociadoPct: 8 }).negociadoExcede, false);
+});
+
 test('nunca queda por debajo del precio mínimo', () => {
   const t: Tarifa = { tarifaId: 2, precioBase: 1000, precioMinimo: 950, topeDescuentoPct: 15 };
   const q = cotizar(t, reglas, { descuentoNegociadoPct: 15 });

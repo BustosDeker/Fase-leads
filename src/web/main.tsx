@@ -11,6 +11,14 @@ import './index.css';
 import { Layout } from './components/Layout';
 import { Tablero } from './pages/Tablero';
 import { Pendiente } from './pages/Pendiente';
+import { Ficha } from './pages/Ficha';
+import { Pipeline } from './pages/Pipeline';
+import { Cotizador } from './pages/Cotizador';
+import { Agenda } from './pages/Agenda';
+import { Diagnosticos } from './pages/Diagnosticos';
+import { Objeciones } from './pages/Objeciones';
+import { Consentimiento } from './pages/Consentimiento';
+import { Auditoria } from './pages/Auditoria';
 
 const cliente = new QueryClient({ defaultOptions: { queries: { staleTime: 15_000, retry: 1, refetchOnWindowFocus: false } } });
 
@@ -23,6 +31,14 @@ createRoot(document.getElementById('raiz')!).render(
             <Route path="/" element={<Navigate to="/leads/tablero" replace />} />
             <Route path="/leads" element={<Navigate to="/leads/tablero" replace />} />
             <Route path="/leads/tablero" element={<Tablero />} />
+            <Route path="/leads/ficha" element={<Ficha />} />
+            <Route path="/leads/pipeline" element={<Pipeline />} />
+            <Route path="/leads/cotizador" element={<Cotizador />} />
+            <Route path="/leads/agenda" element={<Agenda />} />
+            <Route path="/leads/diagnosticos" element={<Diagnosticos />} />
+            <Route path="/leads/objeciones" element={<Objeciones />} />
+            <Route path="/leads/consentimiento" element={<Consentimiento />} />
+            <Route path="/leads/auditoria" element={<Auditoria />} />
             <Route path="*" element={<Pendiente />} />
           </Routes>
         </Layout>

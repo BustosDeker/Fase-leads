@@ -86,8 +86,8 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 |---|---|
 | E1 · Base: repo, setup, conexión, `db:init` | ✅ (ver «Pendiente / Limitaciones») |
 | E2 · Seed + ETL + `etl:verify` | ✅ |
-| E3 · Tablero BI | pendiente |
-| E4 · Ficha nominal, pipeline, cotizador, agenda, objeciones | pendiente |
+| E3 · Tablero BI | ✅ (falta «Explicar con IA», va con el agente en E5) |
+| E4 · Ficha nominal, pipeline, diagnósticos, cotizador, objeciones, agenda, consentimiento, auditoría | ✅ |
 | E5 · Agente Negociador | pendiente |
 | E6 · WhatsApp real con OpenWA | pendiente |
 | E7 · Stubs de otras fases, simulador de PAYERS, Plataforma | pendiente |
@@ -105,6 +105,7 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 ## Pendiente / Limitaciones
 
 - Verificado en Windows 11 con SQL Server 2022 Developer y Node 22.16. **Linux y macOS no se han probado todavía**: los scripts son Node puro, pero falta ejecutarlos allí.
+- Aún no hay inicio de sesión con roles (admin, asesor, viewer): pendiente para la E8.
 - El tablero solo ve lo que cargó el último ETL. Las oportunidades nuevas de la demo aparecen al pulsar «Ejecutar ETL».
 - OpenWA usa WhatsApp Web, una **API no oficial**: el número puede quedar restringido. Usa un número dedicado para la demo. El plan B es el Simulador de WhatsApp de la app.
 - Los precios, topes, plazos y umbrales son **valores de prueba** pendientes de validación por la gestión del negocio (como indica el informe).

@@ -2,12 +2,7 @@
 import { useLocation } from 'react-router-dom';
 
 const MODULOS: Record<string, { titulo: string; etapa: string; descripcion: string }> = {
-  '/leads/ficha': { titulo: 'Ficha nominal', etapa: 'E4', descripcion: 'Buscador por nombre o identificador y los nueve bloques de la tabla 5 del informe, actualizados en vivo.' },
   '/leads/conversaciones': { titulo: 'Conversaciones', etapa: 'E5–E6', descripcion: 'Bandeja de chats, hilo en vivo, simulador de WhatsApp y toma de control humano.' },
-  '/leads/pipeline': { titulo: 'Pipeline de oportunidades', etapa: 'E4', descripcion: 'Kanban por estado con filtros por asesor, canal y etapa.' },
-  '/leads/cotizador': { titulo: 'Cotizador versionado', etapa: 'E4', descripcion: 'Desglose base + extras + recargos − descuentos, con bloqueo de tope y mínimo.' },
-  '/leads/agenda': { titulo: 'Agenda', etapa: 'E4', descripcion: 'Citas virtuales por asesor con detección de solapamientos.' },
-  '/leads/auditoria': { titulo: 'Auditoría', etapa: 'E4', descripcion: 'Controles operativos sobre el OLTP: agenda, trazabilidad, reglas económicas, escalamientos y conciliación con PAYERS.' },
   '/plataforma': { titulo: 'Agente Plataforma', etapa: 'E7', descripcion: 'Embudo transversal BUYERS → LEADS → PAYERS → CUSTOMERS → TURNED.' },
   '/fase/buyers': { titulo: 'BUYERS', etapa: 'E7', descripcion: 'Contrato de integración BUYERS → LEADS (pendiente de implementar por el equipo de BUYERS).' },
   '/fase/payers': { titulo: 'PAYERS', etapa: 'E7', descripcion: 'Contrato LEADS → PAYERS y simulador de confirmación (pendiente de implementar por el equipo de PAYERS).' },

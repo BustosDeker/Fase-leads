@@ -3,15 +3,19 @@
 // WhatsApp y SQL Server. En móvil el menú se apila sobre el contenido y se puede plegar.
 import { useState, type ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLiveEvents } from '../hooks/useLiveEvents';
 import { api, type Salud } from '../api';
 
 const SUBMENU_LEADS = [
   { a: '/leads/ficha', t: 'Ficha nominal' },
   { a: '/leads/conversaciones', t: 'Conversaciones' },
   { a: '/leads/pipeline', t: 'Pipeline' },
+  { a: '/leads/diagnosticos', t: 'Diagnósticos' },
   { a: '/leads/cotizador', t: 'Cotizador' },
+  { a: '/leads/objeciones', t: 'Objeciones y escalamientos' },
   { a: '/leads/agenda', t: 'Agenda' },
+  { a: '/leads/consentimiento', t: 'Consentimiento' },
   { a: '/leads/tablero', t: 'Tablero BI' },
   { a: '/leads/auditoria', t: 'Auditoría' },
 ];
@@ -39,6 +43,11 @@ function Indicador({ etiqueta, ok, texto }: { etiqueta: string; ok: boolean | nu
 export function Layout({ children }: { children: ReactNode }) {
   const [abierto, setAbierto] = useState(false);
   const { pathname } = useLocation();
+  // Cualquier registro en el OLTP (agente, asesor o PAYERS) refresca las pantallas operativas abiertas.
+  // El tablero NO se refresca: lee del data mart y solo cambia al ejecutar el ETL.
+  const cliente = useQueryClient();
+  const DEL_MART = ['kpis', 'reporte', 'tendencia', 'acciones', 'filtros', 'etl'];
+  useLiveEvents({ oltp: () => cliente.invalidateQueries({ predicate: (q) => !DEL_MART.includes(String(q.queryKey[0])) }) });
   const salud = useQuery({ queryKey: ['salud'], queryFn: () => api.get<Salud>('/api/salud'), refetchInterval: 30_000 });
   const sqlOk = salud.data ? salud.data.sqlServer.ok : salud.isError ? false : null;
   const wa = salud.data?.whatsapp.estado;

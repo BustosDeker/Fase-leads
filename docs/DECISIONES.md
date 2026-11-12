@@ -130,3 +130,12 @@ Se recomienda incorporar el cambio al Anexo C del informe.
 - **Integración con SQL Server:** ETL más verificación OLTP ↔ data mart, idempotencia del ETL, rechazo de transiciones no permitidas, `CK_PROPUESTA_TOPE` y `CK_PROPUESTA_MINIMO`, y unicidad de `idempotency_key`.
 
 Las pruebas de integración usan transacciones revertidas, se omiten con aviso si no hay conexión y al terminar restauran el data mart con los parámetros de la carga anterior.
+
+## 13. Pantallas operativas de LEADS (E4)
+
+- **Lógica de negocio en un solo lugar** (`src/negocio/`): transiciones de estado, diagnóstico y aptitud, cotización versionada y agenda. La usan las pantallas y la usarán las tools del agente (E5), así que un asesor y el agente aplican exactamente las mismas reglas. Cada escritura va en una transacción con `UPDLOCK` sobre la oportunidad, para evitar carreras entre el agente y un asesor.
+- **Bloqueo en el cotizador:** los descuentos automáticos de `REGLA_PRECIO` se acotan al tope con un aviso. La propuesta queda **bloqueada** (no se puede presentar; el servidor responde 422) solo cuando el **ajuste negociado** a mano exige más de lo permitido. Así nunca se recorta en silencio lo que pidió una persona.
+- **Versionado:** presentar una versión deja la anterior `PRESENTADA` como `REEMPLAZADA` y, si la oportunidad estaba `APTA_PARA_COTIZAR`, la pasa a `EN_NEGOCIACION`.
+- **Agenda:** el servidor rechaza un solapamiento por asesor (409) antes de insertar, con bloqueo de rango. Las citas canceladas no cuentan. Los cambios de estado siguen el ciclo SOLICITADA → CONFIRMADA → REALIZADA / NO_ASISTIO / CANCELADA.
+- **Menú:** además de lo que pedía la guía visual se agregaron «Diagnósticos», «Objeciones y escalamientos» y «Consentimiento», que son pantallas obligatorias del prompt (4, 6 y 8).
+- **Tiempo real:** una sola conexión SSE por pestaña. Al principio cada componente abría la suya y, con varias pestañas o navegaciones, se agotaba el límite de ~6 conexiones del navegador y las páginas quedaban esperando. Cuando hay un evento «oltp», se refrescan las pantallas operativas; el tablero no, porque lee del data mart y solo cambia con el ETL.

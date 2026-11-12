@@ -26,6 +26,9 @@ export interface Cotizacion {
   precioMinimo: number; topeDescuentoPct: number; ajustes: Ajuste[]; extras: Extra[];
   /** Avisos visibles para el cotizador cuando se recortó un descuento para respetar tope o mínimo. */
   avisos: string[];
+  /** true si lo recortado fue el AJUSTE NEGOCIADO (pedido por una persona): esa propuesta debe bloquearse.
+   *  Los descuentos automáticos de las reglas se acotan al tope sin bloquear. */
+  negociadoExcede: boolean;
 }
 
 const cent = (x: number) => Math.round(x * 100) / 100;
@@ -67,8 +70,10 @@ export function cotizar(t: Tarifa, reglas: Regla[], c: ContextoCotizacion, extra
   const limiteMinimo = piso(base + montoExtras + recargo - t.precioMinimo);
   let disponible = Math.max(0, Math.min(limiteTope, limiteMinimo));
   const aplicados: Ajuste[] = [];
+  let negociadoExcede = false;
   for (const d of descuentos) {               // se respetan en orden; el exceso se recorta
     const monto = piso(Math.min(d.monto, disponible));
+    if (monto < d.monto && d.reglaId === null) negociadoExcede = true;
     if (monto < d.monto) avisos.push(`«${d.concepto}» recortado de S/ ${d.monto.toFixed(2)} a S/ ${monto.toFixed(2)} ` +
       (limiteTope <= limiteMinimo ? `(tope de descuento ${t.topeDescuentoPct} %).` : `(precio mínimo S/ ${t.precioMinimo.toFixed(2)}).`));
     if (monto > 0) aplicados.push({ ...d, monto, porcentaje: cent(monto * 100 / base) });
@@ -79,7 +84,7 @@ export function cotizar(t: Tarifa, reglas: Regla[], c: ContextoCotizacion, extra
     tarifaId: t.tarifaId, precioBase: base, montoExtras, recargo, descuento,
     precioFinal: cent(base + montoExtras + recargo - descuento),
     precioMinimo: t.precioMinimo, topeDescuentoPct: t.topeDescuentoPct,
-    ajustes: [...recargos, ...aplicados], extras, avisos,
+    ajustes: [...recargos, ...aplicados], extras, avisos, negociadoExcede,
   };
 }
 

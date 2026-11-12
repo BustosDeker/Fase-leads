@@ -10,12 +10,15 @@ import { oltp, mart, cerrarPools } from '../db.js';
 import { explicarErrorSql } from '../diagnostico-sql.js';
 import { rutasEventos } from './eventos.js';
 import { rutasTablero } from './rutas-tablero.js';
+import { rutasLeads } from './rutas-leads.js';
+import { ErrorNegocio } from '../negocio/oportunidad.js';
 
 const app = Fastify({ logger: { level: 'info' } });
 
 // Errores amigables: validación (400) y SQL Server caído (503) con pasos a seguir.
 app.setErrorHandler((err, _req, reply) => {
-  if (err instanceof ZodError) return reply.code(400).send({ error: 'Parámetros no válidos', detalle: err.issues });
+  if (err instanceof ZodError) return reply.code(400).send({ error: 'Datos no válidos: ' + err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '), detalle: err.issues });
+  if (err instanceof ErrorNegocio) return reply.code(err.estado).send({ error: err.message });
   const e = err as any;
   if (e?.code && ['ESOCKET', 'ELOGIN', 'ETIMEOUT', 'ECONNCLOSED'].includes(e.code)) {
     return reply.code(503).send({ error: 'SQL Server no está disponible', detalle: explicarErrorSql(e) });
@@ -43,6 +46,7 @@ app.get('/api/salud', async () => {
 
 rutasEventos(app);
 rutasTablero(app);
+rutasLeads(app);
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');
