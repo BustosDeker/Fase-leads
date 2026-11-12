@@ -69,3 +69,22 @@ Solo se agrega `ETL_EJECUCION` (bitácora: hora, duración, parámetros, filas p
 
 - El backend corre con `tsx` (TypeScript sin paso de compilación) para no agregar un build al servidor. El frontend sí se compila con Vite en `setup`.
 - Los scripts de `scripts/` son JavaScript ESM. `setup.js` no tiene dependencias porque corre antes de `npm install`.
+
+## 8. Verificación de los scripts del informe (ejecutados en SQL Server 2022)
+
+El informe (Tabla 24, nota) dice que los scripts de los anexos «no se han ejecutado». Se ejecutaron en este orden sobre una base limpia: `01_OLTP_ER.sql` → `simulacion_informe/02_OLTP_Poblamiento_LEADS.sql` → `03_DataMart_DDL.sql` → `04_ETL.sql` → `05_Conciliacion_Reportes.sql`. Los resultados fueron:
+
+| Control | Esperado (informe) | Obtenido |
+|---|---|---|
+| Poblamiento: oportunidades, diagnósticos, propuestas, objeciones, transferencias, conversiones | 200, 180, 141, 50, 54, 36 | 200, 180, 141, 50, 54, 36 ✔ |
+| Tabla 24 · Hecho_Diagnostico M1·M2 | 180 · 144 | 180 · 144 ✔ |
+| Tabla 24 · Hecho_Oportunidad M3…M8 | 150·120·135·54·200·36 | 150·120·135·54·200·36 ✔ |
+| Tabla 24 · Hecho_Recuperacion_Objecion M9·M10 | 50 · 20 | 50 · 20 ✔ |
+| Tablas 25–27 (K1 por GrupoEtapa, Equipo, TipoUniversidad) | 77,1/81,5/82,2 · 90,0/64,3 · 82,0/77,5 | idénticos ✔ |
+| Tablas 29–30 (K2, K3, K5 por TipoCanal y Familia) | 83,3/43,6/22,5 · 77,8/37,5/15,0 · 87,5/35,0 · 90,9/47,3 · 0,0 | idénticos ✔ |
+| Tablas 31–32 (K4 por Grupo y Familia) | 28,6/41,7/44,4/40,9 · 34,4/50,0 | idénticos ✔ |
+| R4.1 · Citas solapadas | 0 | **1** ✖ |
+| R4.2–R4.4 | 0, 0, 0 | 0, 0, 0 ✔ |
+| R4.5 · Transferencias sin confirmación | 18 | 18 ✔ |
+
+**Inconsistencia en el poblamiento simulado:** las citas 6 (oportunidad 24, REALIZADA) y 11 (oportunidad 34, NO_ASISTIO) del asesor 2 tienen el mismo horario (22/01/2026, 10:00–10:45). R4.1 excluye solo las canceladas, así que las reporta como solapadas. Hay dos formas de corregirlo: mover una de las dos citas en `02_OLTP_Poblamiento_LEADS.sql` (recomendado) o cambiar el texto del informe a «1 solapamiento detectado». No se modificó el script del equipo; la decisión queda para los autores. En la app, la tool `agendar_cita` impide crear solapamientos nuevos.
