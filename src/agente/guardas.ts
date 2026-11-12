@@ -26,6 +26,27 @@ export function detectarInyeccion(texto: string): boolean {
   return PATRONES_INYECCION.some((p) => p.test(t));
 }
 
+/** Extrae un tema de tesis sin confundirlo con datos de avance o disponibilidad de empresa. */
+export function extraerTemaTesis(texto: string): string | null {
+  const t = texto.trim();
+  const marcadores = [
+    /(?:mi|el)\s+tema(?:\s+de\s+(?:mi\s+)?tesis)?\s*(?:es|ser[ií]a|ser[aá]|:)\s*(.+)/i,
+    /mi\s+tesis\s+(?:trata|es|se\s+enfoca)\s+(?:sobre|en|de)?\s*(.+)/i,
+    /(?:quiero|voy\s+a)\s+investigar\s+(?:sobre\s+)?(.+)/i,
+    /(?:investigo|estudio|analizo)\s+(?:sobre\s+)?(.+)/i,
+    /mi\s+investigaci[oó]n\s+(?:trata\s+de|es\s+sobre|consiste\s+en|se\s+titula|es)\s*(.+)/i,
+    /t[ií]tulo(?:\s+de\s+tesis)?\s*:\s*(.+)/i,
+  ];
+  const marcado = marcadores.map((p) => p.exec(t)).find(Boolean);
+  if (marcado) {
+    const tema = marcado[1].trim().replace(/[.,;]+$/, '');
+    return tema.length >= 3 ? tema.slice(0, 250) : null;
+  }
+  if (/\b(?:avance|empresa|instituci[oó]n|aplicar|por ciento)\b|%/i.test(t)) return null;
+  if (/^(?:hola|gracias|muchas gracias|no s[eé]|todav[ií]a no s[eé])[\s.!?]*$/i.test(t)) return null;
+  return t.length >= 8 ? t.slice(0, 250) : null;
+}
+
 /** Herramientas permitidas sin consentimiento (Ley 29733): solo pedirlo, consultar la situación o derivar. */
 export const HERRAMIENTAS_SIN_CONSENTIMIENTO = new Set(['registrar_consentimiento', 'consultar_situacion', 'escalar_a_humano']);
 

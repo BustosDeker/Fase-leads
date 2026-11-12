@@ -100,6 +100,7 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 | «No se pudo abrir una conexión TCP con SQL Server» | TCP/IP deshabilitado o servicio detenido | Ver «Habilitar TCP/IP». |
 | «SQL Server rechazó el inicio de sesión de DB_ADMIN_USER» | Clave de `sa` incorrecta o modo mixto desactivado | Revisa `DB_ADMIN_PASSWORD` y la autenticación mixta. |
 | «… rechazó el inicio de sesión de DB_USER» | El usuario de la app no existe todavía | `npm run db:init`. |
+| OpenWA responde «Session is already started» | La sesión ya tiene un motor activo aunque su estado guardado parezca detenido | No desvincules el teléfono; la app consulta el estado activo y continúa la conexión. |
 | Tildes o emojis se ven como `?` | Script abierto o guardado sin UTF-8 | Los `.sql` están en UTF-8 con BOM; `db:init` los lee así. |
 
 ## Pendiente / Limitaciones

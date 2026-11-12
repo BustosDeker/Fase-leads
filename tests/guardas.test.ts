@@ -1,7 +1,7 @@
 // Pruebas de las barreras del agente (no requieren SQL Server ni IA).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buscarCarrera, buscarUniversidad, detectarEtapa, detectarInyeccion, montosEn, revisarSalida } from '../src/agente/guardas.js';
+import { buscarCarrera, buscarUniversidad, detectarEtapa, detectarInyeccion, extraerTemaTesis, montosEn, revisarSalida } from '../src/agente/guardas.js';
 import type { Catalogos } from '../src/agente/contexto.js';
 
 test('detecta intentos de inyección y no marca mensajes normales', () => {
@@ -46,6 +46,15 @@ test('reconoce universidad, carrera y etapa en texto libre', () => {
   assert.equal(detectarEtapa('estoy en décimo ciclo'), 'CICLO_X');
   assert.equal(detectarEtapa('ciclo IX'), 'CICLO_IX');
   assert.equal(detectarEtapa('hola'), null);
+});
+
+test('no confunde avance y empresa con el tema de tesis', () => {
+  assert.equal(extraerTemaTesis('Tengo el 10% de avance pero aún no tengo una empresa donde aplicar'), null);
+  assert.equal(extraerTemaTesis('No tengo empresa donde aplicar'), null);
+  assert.equal(extraerTemaTesis('Mi tema es el impacto de las redes sociales en el rendimiento académico'), 'el impacto de las redes sociales en el rendimiento académico');
+  assert.equal(extraerTemaTesis('Quiero investigar la relación entre el uso de redes sociales y el rendimiento académico'), 'la relación entre el uso de redes sociales y el rendimiento académico');
+  assert.equal(extraerTemaTesis('Un sistema web para gestionar inventarios'), 'Un sistema web para gestionar inventarios');
+  assert.equal(extraerTemaTesis('Muchas gracias'), null);
 });
 
 test('webhook de WhatsApp: acepta solo la firma HMAC correcta', async () => {

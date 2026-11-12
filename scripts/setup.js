@@ -102,6 +102,8 @@ if (SIN_OPENWA || /^false$/i.test(leerVar('OPENWA_ENABLED'))) {
       const linea = `${clave}=${valor}`;
       owTexto = new RegExp(`^${clave}=.*$`, 'm').test(owTexto) ? owTexto.replace(new RegExp(`^${clave}=.*$`, 'm'), linea) : owTexto.trimEnd() + '\n' + linea + '\n';
     };
+    fijar('PORT', '2785');
+    fijar('BASE_URL', 'http://localhost:2785');
     fijar('SSRF_ALLOWED_HOSTS', 'localhost');
     fijar('AUTO_START_SESSIONS', 'true');
     fijar('RESOLVE_LID_TO_PHONE', 'true');   // remitentes @lid: OpenWA agrega senderPhone (lo usa la lista de números permitidos)

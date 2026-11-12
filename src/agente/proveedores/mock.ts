@@ -2,7 +2,7 @@
 // Usa EXACTAMENTE las mismas herramientas (y por tanto las mismas validaciones y auditoría) que el modo con IA;
 // solo cambia cómo se interpreta el mensaje: con patrones de texto en lugar de un modelo de lenguaje.
 import { catalogos } from '../contexto.js';
-import { buscarCarrera, buscarUniversidad, detectarEtapa, normalizar } from '../guardas.js';
+import { buscarCarrera, buscarUniversidad, detectarEtapa, extraerTemaTesis, normalizar } from '../guardas.js';
 import type { PeticionAgente, ProveedorLLM } from '../tipos.js';
 
 const soles = (n: number) => `S/ ${Number(n).toFixed(2)}`;
@@ -70,24 +70,40 @@ async function responder(p: PeticionAgente): Promise<string> {
 
   switch (cx.estado) {
     case 'ABIERTA': {
-      // Solo se registra el diagnóstico si el mensaje trae datos de la tesis (no un saludo o un pedido de información).
-      const traeTesis = hay(t, /\btema\b|\btitulo\b|\d{1,3}\s*%|\bavance\b|trata (sobre|de)|mi tesis (es|sobre|trata)|\binvestig/);
-      if (!traeTesis) return `${usuario.length <= 1 ? `¡Hola, ${cx.nombres}! Ya tengo tus datos: ${cx.perfil.carrera} en la ${cx.perfil.universidad}. ` : ''}`
-        + 'Cuéntame de tu tesis: ¿cuál es el tema, cuánto avance tienes (en %) y si cuentas con una empresa o institución donde aplicarla?';
-      const avance = /(\d{1,3})\s*%/.exec(ultimo);
-      const empresa = hay(t, /sin empresa|no tengo (empresa|institucion)|aun no tengo/) ? false : hay(t, /empresa|institucion|colegio|hospital|municipalidad|clinica/) ? true : undefined;
+      const datosRecientes = usuario.slice(-5).map((m) => m.texto).join(' ');
+      const tema = [...usuario].reverse().map((m) => extraerTemaTesis(m.texto)).find(Boolean);
+      const avance = /(\d{1,3})\s*%/.exec(datosRecientes);
+      const datosNormalizados = normalizar(datosRecientes);
+      const empresa = hay(datosNormalizados, /sin empresa|no tengo (empresa|institucion)|aun no tengo/) ? false
+        : hay(datosNormalizados, /empresa|institucion|colegio|hospital|municipalidad|clinica/) ? true : undefined;
+      if (!tema) return 'Gracias, tomo nota de tu avance y de si tienes una empresa donde aplicar la tesis. Para solicitar el diagnóstico necesito conocer el tema o problema que quieres investigar. ¿Cuál sería, aunque sea provisional?';
+      const faltan = [!avance && 'tu avance aproximado en porcentaje', empresa === undefined && 'si tienes una empresa o institución donde aplicar'].filter(Boolean);
+      if (faltan.length) return `Gracias. Ya anoté el tema de tu tesis. Para completar la solicitud, cuéntame ${faltan.join(' y ')}.`;
       const fecha = /(\d{1,2})[/-](\d{1,2})[/-](\d{4})/.exec(ultimo);
       if (fecha) await llamar('registrar_preferencias', { fecha_limite: `${fecha[3]}-${fecha[2].padStart(2, '0')}-${fecha[1].padStart(2, '0')}` });
-      const tema = ultimo.replace(/^.*?(mi tema es|el tema es|tema:)\s*/i, '').split(/[.\n]/)[0].slice(0, 250);
-      const r = await llamar('solicitar_diagnostico', { tema_tesis: tema.length >= 3 ? tema : ultimo.slice(0, 250),
+      const r = await llamar('solicitar_diagnostico', { tema_tesis: tema,
         ...(avance ? { avance_declarado: Math.min(100, Number(avance[1])) } : {}), ...(empresa !== undefined ? { tiene_empresa_aplicacion: empresa } : {}) });
       if (!r.ok) return 'Tuve un inconveniente al registrar tu solicitud. ¿Me repites el tema de tu tesis, por favor?';
       return 'Listo, registré tu solicitud de diagnóstico. Un especialista revisará tu caso y te lo entregará en un máximo de 48 horas; con eso te comparto una propuesta a tu medida.';
     }
-    case 'EN_DIAGNOSTICO':
+    case 'EN_DIAGNOSTICO': {
+      if (cx.diagnostico?.estado !== 'ENTREGADO' && !extraerTemaTesis(cx.diagnostico?.tema ?? '')) {
+        const tema = extraerTemaTesis(ultimo);
+        if (!tema) return 'Tu solicitud está pendiente, pero me falta el tema concreto de tu tesis para completar la información del especialista. ¿Qué tema o problema quieres investigar?';
+        const datosNormalizados = normalizar(ultimo);
+        const avance = /(\d{1,3})\s*%/.exec(ultimo);
+        const empresa = hay(datosNormalizados, /sin empresa|no tengo (empresa|institucion)|aun no tengo/) ? false
+          : hay(datosNormalizados, /empresa|institucion|colegio|hospital|municipalidad|clinica/) ? true : undefined;
+        const r = await llamar('actualizar_diagnostico_pendiente', { tema_tesis: tema,
+          ...(avance ? { avance_declarado: Math.min(100, Number(avance[1])) } : {}),
+          ...(empresa !== undefined ? { tiene_empresa_aplicacion: empresa } : {}) });
+        if (!r.ok) return 'Gracias. Para completar tu solicitud necesito conocer el tema o problema que quieres investigar. ¿Cuál sería, aunque sea provisional?';
+        return 'Gracias, ya completé la información de tu solicitud con el tema que me indicaste. El especialista la revisará y te compartiré el diagnóstico en un máximo de 48 horas.';
+      }
       return cx.diagnostico?.estado === 'ENTREGADO'
         ? 'Tu diagnóstico ya está listo y estamos verificando los requisitos para preparar tu propuesta. Te escribo apenas esté.'
         : 'Tu diagnóstico está en revisión por un especialista (plazo máximo de 48 horas desde tu solicitud). Te aviso apenas esté listo.';
+    }
     case 'APTA_PARA_COTIZAR':
       return presentar(cx, t, llamar, 0);
     case 'EN_NEGOCIACION': {

@@ -36,7 +36,24 @@ function abrirNavegador(url) {
 const openwaHabilitado = !/^false$/i.test(process.env.OPENWA_ENABLED || '');
 if (openwaHabilitado && fs.existsSync(path.join(OPENWA_DIR, 'node_modules'))) {
   const script = fs.existsSync(path.join(OPENWA_DIR, 'dist', 'main.js')) ? 'start:prod' : 'start';
-  lanzar('openwa', '32', 'npm', ['run', script], OPENWA_DIR);
+  const openwaEnv = {
+    ...process.env,
+    PORT: '2785',
+    BASE_URL: 'http://localhost:2785',
+  };
+  const p = spawn('npm', ['run', script], {
+    cwd: OPENWA_DIR,
+    shell: esWindows,
+    env: openwaEnv,
+  });
+  const prefijo = '\x1b[32m[openwa]\x1b[0m ';
+  const volcar = (flujo) => (datos) => {
+    for (const linea of datos.toString().split(/\r?\n/)) if (linea.trim()) flujo.write(prefijo + linea + '\n');
+  };
+  p.stdout.on('data', volcar(process.stdout));
+  p.stderr.on('data', volcar(process.stderr));
+  p.on('exit', (c) => console.log(`${prefijo}terminó (código ${c})`));
+  procesos.push(p);
 } else {
   console.log('[start] OpenWA no está instalado o está deshabilitado: la demo usará el Simulador de WhatsApp.');
 }

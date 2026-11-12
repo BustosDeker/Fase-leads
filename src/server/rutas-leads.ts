@@ -7,7 +7,7 @@ import { oltp, sql } from '../db.js';
 import { agendarCita, cambiarEstadoCita, esquemaCita, reprogramarCita, ESTADOS_CITA } from '../negocio/agenda.js';
 import { calificarAptitud, entregarDiagnostico, esquemaSolicitudDiagnostico, solicitarDiagnostico } from '../negocio/diagnostico.js';
 import * as L from '../negocio/lecturas.js';
-import { enTransaccion, transicionar } from '../negocio/oportunidad.js';
+import { enTransaccion, ErrorNegocio, transicionar } from '../negocio/oportunidad.js';
 import { contextoCotizacion, esquemaSolicitudCotizacion, presentarPropuesta, simularCotizacion } from '../negocio/propuestas.js';
 import { publicar } from './eventos.js';
 
@@ -30,6 +30,43 @@ export function rutasLeads(app: FastifyInstance) {
     const { leadId } = z.object({ leadId: id }).parse(req.params);
     const f = await L.fichaNominal(leadId);
     return f ?? reply.code(404).send({ error: 'No existe ese lead.' });
+  });
+  app.post('/api/leads/:leadId/contacto', async (req) => {
+    const { leadId } = z.object({ leadId: id }).parse(req.params);
+    const datos = z.object({
+      nombres: z.string().trim().min(1).max(100),
+      apellidos: z.string().trim().min(1).max(100),
+      whatsapp: z.string().trim().refine((v) => !v || (/^\+?[\d\s().-]+$/.test(v) && /\d/.test(v)),
+        'El WhatsApp solo puede contener números y separadores habituales.')
+        .transform((v) => v.replace(/\D/g, ''))
+        .refine((v) => !v || (v.length >= 9 && v.length <= 15), 'El WhatsApp debe tener entre 9 y 15 dígitos.'),
+      correo: z.string().trim().max(150).transform((v) => v || null)
+        .refine((v) => v === null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), 'Ingresa un correo válido.'),
+    }).parse(req.body);
+    await enTransaccion(await oltp(), async (tx) => {
+      const contacto = await new sql.Request(tx).input('l', sql.Int, leadId).query(`
+        SELECT c.contacto_id
+        FROM dbo.LEAD l
+        JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id
+        JOIN dbo.CONTACTO c ON c.contacto_id = b.contacto_id
+        WHERE l.lead_id = @l`);
+      const contactoId = contacto.recordset[0]?.contacto_id as number | undefined;
+      if (!contactoId) throw new ErrorNegocio('No existe ese lead.', 404);
+      if (datos.whatsapp) {
+        const duplicado = await new sql.Request(tx).input('c', sql.Int, contactoId)
+          .input('w', sql.VarChar(20), datos.whatsapp).query(`
+            SELECT contacto_id FROM dbo.CONTACTO WITH (UPDLOCK, HOLDLOCK)
+            WHERE whatsapp = @w AND contacto_id <> @c`);
+        if (duplicado.recordset.length) throw new ErrorNegocio('Ese WhatsApp ya está registrado en otro contacto.', 409);
+      }
+      await new sql.Request(tx).input('c', sql.Int, contactoId).input('n', sql.VarChar(100), datos.nombres)
+        .input('a', sql.VarChar(100), datos.apellidos).input('w', sql.VarChar(20), datos.whatsapp || null)
+        .input('e', sql.VarChar(150), datos.correo).query(`
+          UPDATE dbo.CONTACTO SET nombres = @n, apellidos = @a, whatsapp = @w, correo = @e
+          WHERE contacto_id = @c`);
+    });
+    publicar('oltp', { tipo: 'contacto', leadId });
+    return { ok: true };
   });
 
   // ---------------- Pipeline y estados

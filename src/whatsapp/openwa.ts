@@ -68,6 +68,11 @@ function mapearEstado(s: string): EstadoWhatsApp {
     : ['action_required', 'failed'].includes(s) ? 'ERROR' : 'DESCONECTADO';
 }
 
+function estadoDeSesion(s: any): EstadoWhatsApp {
+  const estadoSesion = mapearEstado(s.status);
+  return s.engineLoaded && estadoSesion === 'DESCONECTADO' ? 'CONECTANDO' : estadoSesion;
+}
+
 async function buscarSesion() {
   const lista = await llamar<any[]>('GET', '/api/sessions');
   return lista.find((s) => s.name === cfg().sesion) ?? null;
@@ -102,7 +107,7 @@ async function sincronizarAhora() {
     const s = await buscarSesion();
     if (!s) return fijarEstado({ estado: 'DESCONECTADO', sesionId: null, detalle: 'Sin sesión de WhatsApp: pulsa «Conectar WhatsApp».' });
     if (!estado.webhookListo || estado.sesionId !== s.id) await asegurarWebhook(s.id);
-    fijarEstado({ estado: mapearEstado(s.status), sesionId: s.id, telefono: s.phone ?? null, nombre: s.pushName ?? null, detalle: s.lastError ?? null });
+    fijarEstado({ estado: estadoDeSesion(s), sesionId: s.id, telefono: s.phone ?? null, nombre: s.pushName ?? null, detalle: s.lastError ?? null });
   } catch (e: any) {
     if (e instanceof ErrorOpenWA && e.estadoHttp === 429) return;   // límite de OpenWA: se conserva el último estado conocido
     fijarEstado({ estado: e instanceof ErrorOpenWA && e.estadoHttp === 0 ? 'SIN_CONEXION' : 'ERROR', detalle: e.message, webhookListo: false });
@@ -114,8 +119,17 @@ export async function conectar() {
   if (!s) s = await llamar('POST', '/api/sessions', { name: cfg().sesion, config: { autoRejectCalls: true } });
   await asegurarWebhook(s.id);
   // Solo se arranca si está detenida; si ya espera QR o se está conectando, basta con mostrar el QR.
-  if (['created', 'disconnected', 'failed', 'stopped'].includes(s.status)) s = await llamar('POST', `/api/sessions/${s.id}/start`);
-  fijarEstado({ estado: mapearEstado(s.status), sesionId: s.id, detalle: null });
+  if (!s.engineLoaded && ['created', 'disconnected', 'failed', 'stopped'].includes(s.status)) {
+    try {
+      s = await llamar('POST', `/api/sessions/${s.id}/start`);
+    } catch (e) {
+      const esInicioEnCurso = e instanceof ErrorOpenWA && e.estadoHttp === 400
+        && /Session is already (started|starting)/i.test(e.message);
+      if (!esInicioEnCurso) throw e;
+      s = await llamar('GET', `/api/sessions/${s.id}`);
+    }
+  }
+  fijarEstado({ estado: estadoDeSesion(s), sesionId: s.id, telefono: s.phone ?? null, nombre: s.pushName ?? null, detalle: s.lastError ?? null });
   return resumenEstado();
 }
 

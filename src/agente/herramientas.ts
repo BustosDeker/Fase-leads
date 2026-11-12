@@ -8,7 +8,7 @@ import { solicitarDiagnostico } from '../negocio/diagnostico.js';
 import { ErrorNegocio, enTransaccion, oportunidadBloqueada, registrarEvento, transicionar } from '../negocio/oportunidad.js';
 import { presentarPropuesta, simularCotizacion } from '../negocio/propuestas.js';
 import { catalogos, type ContextoAgente } from './contexto.js';
-import { buscarCarrera, buscarUniversidad, HERRAMIENTAS_SIN_CONSENTIMIENTO } from './guardas.js';
+import { buscarCarrera, buscarUniversidad, extraerTemaTesis, HERRAMIENTAS_SIN_CONSENTIMIENTO } from './guardas.js';
 import type { HerramientaLLM } from './tipos.js';
 
 export const MOTIVOS_ESCALAMIENTO = ['CLIENTE_PIDE_ESPECIALISTA', 'FUERA_COBERTURA', 'OBJECION_REPETIDA', 'DESCUENTO_EXCEDE_TOPE', 'RECLAMO_PAGO',
@@ -134,7 +134,7 @@ export const HERRAMIENTAS = {
   }),
 
   solicitar_diagnostico: h({
-    def: { nombre: 'solicitar_diagnostico', descripcion: 'Registra la solicitud de diagnóstico de la tesis con lo que contó el estudiante. Un especialista lo entrega en un plazo máximo de 48 horas; recién después se puede cotizar. Requiere perfil académico registrado.',
+    def: { nombre: 'solicitar_diagnostico', descripcion: 'Registra la solicitud de diagnóstico solo cuando el estudiante haya indicado un tema concreto de tesis. No uses frases de avance, empresa o respuestas genéricas como tema. Si falta el tema, pregúntalo y espera. Un especialista entrega el diagnóstico en un máximo de 48 horas; recién después se puede cotizar. Requiere perfil académico registrado.',
       esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA'] },
         avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' }, limitaciones: { type: 'string' } }, ['tema_tesis']) },
     entrada: z.object({ tema_tesis: z.string().min(3).max(250), tipo_tesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA']).optional(),
@@ -142,10 +142,38 @@ export const HERRAMIENTAS = {
     async ejecutar(cx, e) {
       const { oportunidadId } = exigirOportunidad(cx);
       if (!cx.perfil) return { ok: false, error: 'Primero registra universidad, carrera y etapa.' };
+      if (!extraerTemaTesis(e.tema_tesis)) return { ok: false, error: 'Falta un tema concreto de tesis. Pregúntaselo al estudiante antes de registrar el diagnóstico.' };
       if (cx.diagnostico && cx.diagnostico.estado !== 'ENTREGADO') return { ok: false, error: 'Ya hay un diagnóstico en curso.', diagnostico: cx.diagnostico };
       const r = await enTransaccion(await oltp(), (tx) => solicitarDiagnostico(tx, { oportunidadId, temaTesis: e.tema_tesis, tipoTesis: e.tipo_tesis,
         avanceDeclarado: e.avance_declarado, tieneEmpresaAplicacion: e.tiene_empresa_aplicacion, limitaciones: e.limitaciones }, null, 'AGENTE'));
       return { ok: true, diagnosticoId: r.diagnostico_id, plazo: 'máximo 48 horas', siguiente: 'Un especialista revisa y entrega el diagnóstico; luego se cotiza.' };
+    },
+  }),
+  actualizar_diagnostico_pendiente: h({
+    def: { nombre: 'actualizar_diagnostico_pendiente', descripcion: 'Completa con información nueva del estudiante un diagnóstico que ya está pendiente. Úsala cuando se registró sin tema concreto o el estudiante aporte ahora el tema. No inventes información; si aún falta el tema, pregúntalo primero.',
+      esquema: objeto({ tema_tesis: { type: 'string' }, tipo_tesis: { type: 'string', enum: ['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA'] },
+        avance_declarado: { type: 'number', description: 'Porcentaje 0–100.' }, tiene_empresa_aplicacion: { type: 'boolean' }, limitaciones: { type: 'string' } }, ['tema_tesis']) },
+    entrada: z.object({ tema_tesis: z.string().min(3).max(250), tipo_tesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA']).optional(),
+      avance_declarado: z.number().min(0).max(100).optional(), tiene_empresa_aplicacion: z.boolean().optional(), limitaciones: z.string().max(300).optional() }),
+    async ejecutar(cx, e) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      if (!cx.diagnostico || cx.diagnostico.estado === 'ENTREGADO') return { ok: false, error: 'No hay un diagnóstico pendiente que se pueda completar.' };
+      const tema = extraerTemaTesis(e.tema_tesis);
+      if (!tema) return { ok: false, error: 'Falta un tema concreto de tesis. Pregúntaselo al estudiante antes de actualizar.' };
+      await enTransaccion(await oltp(), async (tx) => {
+        const r = await new sql.Request(tx).input('d', sql.Int, cx.diagnostico!.id).input('o', sql.Int, oportunidadId)
+          .input('t', sql.NVarChar(250), tema).input('tt', sql.VarChar, e.tipo_tesis ?? null)
+          .input('av', sql.Decimal(5, 2), e.avance_declarado ?? null).input('em', sql.Bit, e.tiene_empresa_aplicacion ?? null)
+          .input('li', sql.NVarChar(300), e.limitaciones ?? null).query(`
+            UPDATE dbo.DIAGNOSTICO
+            SET tema_tesis = @t, tipo_tesis = COALESCE(@tt, tipo_tesis), avance_declarado = COALESCE(@av, avance_declarado),
+                tiene_empresa_aplicacion = COALESCE(@em, tiene_empresa_aplicacion), limitaciones = COALESCE(@li, limitaciones)
+            OUTPUT INSERTED.diagnostico_id
+            WHERE diagnostico_id = @d AND oportunidad_id = @o AND estado <> 'ENTREGADO'`);
+        if (!r.recordset[0]) throw new ErrorNegocio('El diagnóstico ya no está pendiente o no pertenece a esta oportunidad.');
+        await registrarEvento(tx, oportunidadId, 'DIAGNOSTICO_ACTUALIZADO', 'AGENTE', `Se completó la información del tema: ${tema.slice(0, 250)}`);
+      });
+      return { ok: true, diagnosticoId: cx.diagnostico.id, siguiente: 'La solicitud sigue pendiente de revisión por el especialista.' };
     },
   }),
 
@@ -322,7 +350,8 @@ export async function ejecutarHerramienta(cx: ContextoAgente, nombre: string, en
     resultado = await herr.ejecutar(cx, herr.entrada.parse(entrada ?? {}));
     ok = !(resultado && typeof resultado === 'object' && (resultado as any).ok === false);
     // Mantiene el contexto al día dentro del mismo turno (p. ej. tras otorgar consentimiento).
-    if (ok && ['registrar_consentimiento', 'registrar_perfil_academico', 'solicitar_diagnostico', 'presentar_propuesta', 'registrar_respuesta_propuesta'].includes(nombre)) {
+    if (ok && ['registrar_consentimiento', 'registrar_perfil_academico', 'solicitar_diagnostico', 'actualizar_diagnostico_pendiente',
+      'presentar_propuesta', 'registrar_respuesta_propuesta'].includes(nombre)) {
       const { cargarContexto } = await import('./contexto.js');
       Object.assign(cx, await cargarContexto(cx.conversacionId));
     }

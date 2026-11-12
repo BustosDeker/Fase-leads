@@ -42,6 +42,8 @@ export function Ficha() {
   const [params, setParams] = useSearchParams();
   const navegar = useNavigate();
   const cliente = useQueryClient();
+  const [editarContacto, setEditarContacto] = useState(false);
+  const [contactoEditado, setContactoEditado] = useState({ nombres: '', apellidos: '', whatsapp: '', correo: '' });
   const leadId = Number(params.get('lead')) || null;
   const q = useQuery({ queryKey: ['ficha', leadId], enabled: !!leadId, queryFn: () => api.get<Ficha>(`/api/leads/${leadId}/ficha`) });
   const f = q.data;
@@ -52,6 +54,13 @@ export function Ficha() {
   const accion = useMutation({
     mutationFn: ({ url, cuerpo }: { url: string; cuerpo?: unknown }) => api.post(url, cuerpo),
     onSuccess: () => cliente.invalidateQueries({ queryKey: ['ficha', leadId] }),
+  });
+  const guardarContacto = useMutation({
+    mutationFn: () => api.post(`/api/leads/${leadId}/contacto`, contactoEditado),
+    onSuccess: async () => {
+      setEditarContacto(false);
+      await cliente.invalidateQueries({ queryKey: ['ficha', leadId] });
+    },
   });
 
   const p = f?.persona;
@@ -108,13 +117,43 @@ export function Ficha() {
           </section>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <Bloque titulo="Identidad y contacto" origen="BUYERS · CONTACTO (solo lectura)">
+            <Bloque titulo="Identidad y contacto" origen="Datos del contacto recibido desde BUYERS"
+              accion={<button className="boton-claro" onClick={() => {
+                setContactoEditado({ nombres: p.nombres ?? '', apellidos: p.apellidos ?? '', whatsapp: p.whatsapp ?? '', correo: p.correo ?? '' });
+                guardarContacto.reset();
+                setEditarContacto(!editarContacto);
+              }}>{editarContacto ? 'Cerrar edición' : 'Editar contacto'}</button>}>
               <Datos filas={[
                 ['Nombres', p.nombres], ['Apellidos', p.apellidos], ['WhatsApp', p.whatsapp], ['Correo', p.correo],
                 ['Consentimiento', p.no_contactar ? <Chip tono="malo">■ Revocado {fecha(p.fecha_revocacion)}</Chip>
                   : p.consentimiento_contacto ? <Chip tono="bueno">● Vigente desde {fecha(p.fecha_consentimiento)}</Chip> : <Chip tono="regular">▲ Sin consentimiento</Chip>],
                 ['Estado del contacto', p.estado_contacto],
               ]} />
+              {editarContacto && (
+                <form className="mt-4 grid grid-cols-1 gap-3 border-t border-linea pt-4 sm:grid-cols-2"
+                  onSubmit={(e) => { e.preventDefault(); guardarContacto.mutate(); }}>
+                  <label><span className="etiqueta-campo">Nombres</span>
+                    <input className="campo" required maxLength={100} value={contactoEditado.nombres}
+                      onChange={(e) => setContactoEditado({ ...contactoEditado, nombres: e.target.value })} /></label>
+                  <label><span className="etiqueta-campo">Apellidos</span>
+                    <input className="campo" required maxLength={100} value={contactoEditado.apellidos}
+                      onChange={(e) => setContactoEditado({ ...contactoEditado, apellidos: e.target.value })} /></label>
+                  <label><span className="etiqueta-campo">WhatsApp (con código de país)</span>
+                    <input className="campo" inputMode="tel" placeholder="51987654321" value={contactoEditado.whatsapp}
+                      onChange={(e) => setContactoEditado({ ...contactoEditado, whatsapp: e.target.value })} /></label>
+                  <label><span className="etiqueta-campo">Correo</span>
+                    <input className="campo" type="email" maxLength={150} value={contactoEditado.correo}
+                      onChange={(e) => setContactoEditado({ ...contactoEditado, correo: e.target.value })} /></label>
+                  <p className="nota sm:col-span-2">El WhatsApp debe incluir el código de país, por ejemplo 51. Déjalo vacío si no tiene número. Esto no modifica el consentimiento.</p>
+                  {guardarContacto.isError && <div className="sm:col-span-2"><Aviso>{(guardarContacto.error as Error).message}</Aviso></div>}
+                  <div className="flex gap-2 sm:col-span-2">
+                    <button className="boton-negro" disabled={guardarContacto.isPending}>
+                      {guardarContacto.isPending ? 'Guardando…' : 'Guardar cambios'}
+                    </button>
+                    <button type="button" className="boton-claro" onClick={() => setEditarContacto(false)}>Cancelar</button>
+                  </div>
+                </form>
+              )}
             </Bloque>
             <Bloque titulo="Contexto académico" origen="BUYERS · PERFIL_ACADEMICO (solo lectura)">
               {p.carrera ? <Datos filas={[
@@ -261,4 +300,3 @@ export function Ficha() {
     </div>
   );
 }
-
