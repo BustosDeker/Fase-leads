@@ -9,6 +9,9 @@ import '@fontsource/inter/600.css';
 import '@fontsource/inter/700.css';
 import './index.css';
 import { Layout } from './components/Layout';
+import { ConSesion } from './components/Sesion';
+import { Evidencias } from './pages/Evidencias';
+import { Demo } from './pages/Demo';
 import { Tablero } from './pages/Tablero';
 import { Pendiente } from './pages/Pendiente';
 import { Ficha } from './pages/Ficha';
@@ -29,6 +32,7 @@ createRoot(document.getElementById('raiz')!).render(
   <StrictMode>
     <QueryClientProvider client={cliente}>
       <BrowserRouter>
+        <ConSesion>
         <Layout>
           <Routes>
             <Route path="/" element={<Navigate to="/leads/tablero" replace />} />
@@ -45,9 +49,12 @@ createRoot(document.getElementById('raiz')!).render(
             <Route path="/leads/conversaciones" element={<Conversaciones />} />
             <Route path="/fase/:fase" element={<Fase />} />
             <Route path="/plataforma" element={<Plataforma />} />
+            <Route path="/evidencias" element={<Evidencias />} />
+            <Route path="/demo" element={<Demo />} />
             <Route path="*" element={<Pendiente />} />
           </Routes>
         </Layout>
+        </ConSesion>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

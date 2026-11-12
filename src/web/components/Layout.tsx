@@ -6,6 +6,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLiveEvents } from '../hooks/useLiveEvents';
 import { api, type Salud } from '../api';
+import { NOMBRE_ROL, useSesion } from './Sesion';
 
 const SUBMENU_LEADS = [
   { a: '/leads/ficha', t: 'Ficha nominal' },
@@ -57,6 +58,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const salud = useQuery({ queryKey: ['salud'], queryFn: () => api.get<Salud>('/api/salud'), refetchInterval: 30_000 });
   const sqlOk = salud.data ? salud.data.sqlServer.ok : salud.isError ? false : null;
   const wa = salud.data?.whatsapp.estado;
+  const { yo, salir } = useSesion();
 
   return (
     <div className="min-h-screen md:flex">
@@ -106,6 +108,14 @@ export function Layout({ children }: { children: ReactNode }) {
               <span className="flex h-6 w-6 items-center justify-center rounded-md border border-white/25 text-xs">◆</span>
               Agente Plataforma
             </NavLink>
+            {[{ a: '/evidencias', t: 'Evidencias', s: '✓' }, { a: '/demo', t: 'Guion de demo', s: '▶' }].map((x) => (
+              <NavLink key={x.a} to={x.a} onClick={() => setAbierto(false)}
+                className={({ isActive }) => `flex min-h-[44px] items-center gap-3 rounded-lg px-2 text-sm font-semibold ${
+                  isActive ? 'bg-menu-2 text-white' : 'text-menu-texto hover:bg-menu-2 hover:text-white'}`}>
+                <span className="flex h-6 w-6 items-center justify-center rounded-md border border-white/25 text-xs">{x.s}</span>
+                {x.t}
+              </NavLink>
+            ))}
           </div>
         </nav>
 
@@ -113,6 +123,10 @@ export function Layout({ children }: { children: ReactNode }) {
           <Indicador etiqueta="WhatsApp" ok={wa === 'CONECTADO' ? true : wa ? null : null}
             texto={wa ? (ETIQUETA_WA[wa] ?? wa) : '…'} />
           <Indicador etiqueta="SQL Server" ok={sqlOk} texto={sqlOk === null ? '…' : sqlOk ? 'Conectado' : 'Sin conexión'} />
+          <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-3 text-xs">
+            <span className="min-w-0 truncate text-white">{yo.usuario} <span className="text-menu-texto">· {NOMBRE_ROL[yo.rol]}</span></span>
+            <button className="rounded-md border border-white/25 px-2 py-1 text-white hover:bg-menu-2" onClick={salir}>Salir</button>
+          </div>
         </div>
       </aside>
 

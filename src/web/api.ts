@@ -11,6 +11,8 @@ async function pedir<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ErrorApi(0, 'No se pudo conectar con la aplicación. ¿Está corriendo `npm start`?');
   }
   const cuerpo = await r.json().catch(() => ({}));
+  // Sesión vencida o cerrada en otra pestaña: la app vuelve a la pantalla de ingreso.
+  if (r.status === 401 && !url.startsWith('/api/auth/')) window.dispatchEvent(new Event('sesion-expirada'));
   if (!r.ok) throw new ErrorApi(r.status, cuerpo.error ?? `Error ${r.status}`, cuerpo.detalle);
   return cuerpo as T;
 }

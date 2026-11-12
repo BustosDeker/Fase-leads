@@ -91,7 +91,7 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 | E5 · Agente Negociador + simulador de WhatsApp + pantalla Conversaciones | ✅ (modo mock verificado; ver «Pendiente / Limitaciones») |
 | E6 · WhatsApp real con OpenWA (QR, webhook firmado, números permitidos, control humano) | ✅ (falta la prueba con un teléfono real: ver «Pendiente / Limitaciones») |
 | E7 · Integración BUYERS → LEADS → PAYERS (con token), simuladores, fases CUSTOMERS/TURNED y Agente Plataforma | ✅ |
-| E8 · Pulido de demo | pendiente |
+| E8 · Ingreso con roles, Evidencias, guion `/demo` y README final | ✅ |
 
 ## Solución de problemas
 
@@ -108,7 +108,6 @@ vendor/       OpenWA (lo clona setup; no se versiona)
 - El agente con IA real (Claude, OpenAI, Gemini) **no se ha probado con una clave en este entorno**: solo el modo `mock` está verificado de punta a punta. Los adaptadores de OpenAI y Gemini usan sus API HTTP documentadas, pero pueden necesitar ajustes.
 - En modo `mock` el agente entiende frases típicas (consentimiento, universidad/carrera/etapa, tema y avance, contado/cuotas, descuento con %, cita, aceptación, objeciones del catálogo); fuera de eso responde de forma genérica.
 - CUSTOMERS y TURNED son pantallas informativas: sus módulos los construyen otros equipos.
-- Aún no hay inicio de sesión con roles (admin, asesor, viewer): pendiente para la E8.
 - El tablero solo ve lo que cargó el último ETL. Las oportunidades nuevas de la demo aparecen al pulsar «Ejecutar ETL».
 - **WhatsApp real no se probó con un teléfono vinculado** en este entorno: sí se verificó que OpenWA crea la sesión y el QR, que entrega avisos a la app con una firma válida (prueba de webhook de OpenWA) y las reglas de entrada (firma, números permitidos, frase de activación, grupos y duplicados) con avisos firmados simulados. Falta escanear el QR y conversar desde un número real.
 - OpenWA usa WhatsApp Web, una **API no oficial**: el número puede quedar restringido. Usa un número dedicado para la demo. El plan B es el Simulador de WhatsApp de la app.

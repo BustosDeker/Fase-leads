@@ -168,3 +168,10 @@ Las pruebas de integración usan transacciones revertidas, se omiten con aviso s
 - **Transferencia automática al aceptar.** La regla del informe (aceptación expresa → acuerdo transferido) se aplica en cuanto el agente registra la aceptación. Si falla, la oportunidad queda «Aceptada» y se puede transferir desde la pantalla PAYERS.
 - **Leads de BUYERS en WhatsApp.** Si un número ya es lead, su primer mensaje abre la conversación sobre su oportunidad vigente, sin pedir de nuevo la frase de activación ni el consentimiento.
 - **Sin datos de pago en LEADS.** Solo se guarda la referencia de la confirmación (evento, fecha y orden de pago opcional), como pide el informe.
+
+## 17. Ingreso con roles y evidencias (E8)
+
+- **Sin librerías de sesión.** Cookie firmada con HMAC-SHA256 (`SESSION_SECRET`), HttpOnly, SameSite=Lax y 12 horas de vigencia. Un usuario quitado de `APP_USERS` pierde la sesión en su siguiente petición.
+- **La autorización vive en un solo lugar** (`autorizar()` en `src/server/auth.ts`, con pruebas): sin sesión → 401; `viewer` solo consulta; el ETL y la vinculación de WhatsApp son solo de `admin`.
+- **Las evidencias se calculan, no se escriben.** `/evidencias` consulta los permisos reales del usuario SQL (`IS_SRVROLEMEMBER`, `IS_MEMBER`, `HAS_PERMS_BY_NAME`), recalcula las 10 medidas desde el OLTP y las compara con el data mart, y ejecuta `npm test` en el servidor.
+- **Sin códigos internos en la UI**, también en Evidencias: las medidas y reglas se muestran con el nombre de negocio de `shared/indicadores.ts`.

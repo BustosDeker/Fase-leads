@@ -24,7 +24,7 @@ export function Chip({ children, tono = 'neutro' }: { children: ReactNode; tono?
     bueno: 'bg-bueno-fondo text-bueno-texto border-bueno-marca/40', regular: 'bg-regular-fondo text-regular-texto border-regular-marca/60',
     malo: 'bg-malo-fondo text-malo-texto border-malo-marca/40',
   }[tono];
-  return <span className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold ${t}`}>{children}</span>;
+  return <span className={`inline-flex max-w-full items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${t}`}>{children}</span>;
 }
 
 export function Bloque({ titulo, origen, children, accion, className = '' }: { titulo: string; origen?: string; children: ReactNode; accion?: ReactNode; className?: string }) {

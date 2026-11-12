@@ -14,6 +14,8 @@ import { rutasLeads } from './rutas-leads.js';
 import { rutasAgente } from './rutas-agente.js';
 import { rutasWhatsApp } from './rutas-whatsapp.js';
 import { rutasIntegraciones } from './rutas-integraciones.js';
+import { rutasAuth } from './auth.js';
+import { rutasEvidencias } from './rutas-evidencias.js';
 import { resumenEstado as estadoWhatsApp } from '../whatsapp/openwa.js';
 import { estadoAgente } from '../agente/motor.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
@@ -48,12 +50,14 @@ app.get('/api/salud', async () => {
   return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: estadoAgente(), whatsapp: estadoWhatsApp() };
 });
 
+rutasAuth(app);   // primero: protege todas las rutas /api siguientes
 rutasEventos(app);
 rutasTablero(app);
 rutasLeads(app);
 rutasAgente(app);
 rutasWhatsApp(app);
 rutasIntegraciones(app);
+rutasEvidencias(app);
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');

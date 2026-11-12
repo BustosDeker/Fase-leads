@@ -59,3 +59,22 @@ test('webhook de WhatsApp: acepta solo la firma HMAC correcta', async () => {
   assert.equal(firmaValida(cuerpo, 'sha256=' + '0'.repeat(64)), false);
   assert.equal(firmaValida(cuerpo, undefined), false);
 });
+
+test('sesión: token firmado y permisos por rol', async () => {
+  process.env.SESSION_SECRET = 'secreto-de-sesion-para-pruebas-123456';
+  process.env.APP_USERS = 'ana:x:admin,beto:y:asesor,caro:z:viewer';
+  const { crearToken, leerToken, autorizar } = await import('../src/server/auth.js');
+  const t = crearToken({ usuario: 'beto', rol: 'asesor', exp: Date.now() + 60_000 });
+  assert.equal(leerToken(t)?.usuario, 'beto');
+  assert.equal(leerToken(t.slice(0, -2) + 'xx'), null);                                           // firma alterada
+  assert.equal(leerToken(crearToken({ usuario: 'beto', rol: 'admin', exp: Date.now() + 60_000 })), null); // rol que no tiene
+  assert.equal(leerToken(crearToken({ usuario: 'beto', rol: 'asesor', exp: Date.now() - 1 })), null);     // vencido
+  const s = (rol: 'admin' | 'asesor' | 'viewer') => ({ usuario: 'u', rol, exp: Date.now() + 60_000 });
+  assert.equal(autorizar('GET', '/api/pipeline', null).ok, false);
+  assert.equal(autorizar('POST', '/api/buyers', null).ok, true);            // usa su propio token
+  assert.equal(autorizar('POST', '/api/etl/ejecutar', s('asesor')).ok, false);
+  assert.equal(autorizar('POST', '/api/etl/ejecutar', s('admin')).ok, true);
+  assert.equal(autorizar('POST', '/api/cotizador/presentar', s('viewer')).ok, false);
+  assert.equal(autorizar('GET', '/api/pipeline', s('viewer')).ok, true);
+  assert.equal(autorizar('POST', '/api/tablero/explicar', s('viewer')).ok, true);
+});
