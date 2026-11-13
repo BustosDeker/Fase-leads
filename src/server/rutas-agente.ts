@@ -1,5 +1,3 @@
-// API del Agente Negociador: simulador de WhatsApp, conversaciones (con auditoría de turnos),
-// control humano y «Explicar este tablero».
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { crearConversacionSimulada, detalleConversacion, devolverControl, listarConversaciones, tomarControl } from '../agente/conversaciones.js';
@@ -149,6 +147,5 @@ export function rutasAgente(app: FastifyInstance, dependencias: Partial<Dependen
     return { ok: true };
   });
 
-  // ---------------- Agente Plataforma: explicar el tablero
   app.post('/api/tablero/explicar', async (req) => explicarTablero(esquemaFiltros.parse(req.body ?? {}), await plazos()));
 }

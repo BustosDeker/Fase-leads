@@ -106,8 +106,8 @@
           },
           "conditions": [
             {
-              "id": "hay-derivaciones",
-              "leftValue": "={{($json.derivaciones || []).length}}",
+              "id": "hay-riesgo-alvaro",
+              "leftValue": "={{($json.derivaciones || []).filter(d => d.estudiante === 'Alvaro Romero' && d.motivo === 'RIESGO_ABANDONO').length}}",
               "rightValue": 0,
               "operator": {
                 "type": "number",
@@ -129,17 +129,17 @@
     },
     {
       "parameters": {
-        "fromEmail": "",
-        "toEmail": "",
-        "subject": "INBESTIGA: nueva derivación pendiente",
+        "fromEmail": "ajpazro@unitru.edu.pe",
+        "toEmail": "ajpazro@unitru.edu.pe",
+        "subject": "INBESTIGA: riesgo de abandono — Alvaro Romero",
         "emailType": "text",
-        "message": "={{JSON.stringify($json.derivaciones)}}"
+        "message": "={{(() => { const d = ($json.derivaciones || []).find(x => x.estudiante === 'Alvaro Romero' && x.motivo === 'RIESGO_ABANDONO'); return d ? `Estimado asesor,\n\nSe requiere atención para el siguiente caso derivado por riesgo de abandono:\n\nEstudiante: ${d.estudiante}\nMotivo: ${d.motivo}\nFecha: ${d.fecha}\nResumen: ${d.resumen}\nEscalamiento: #${d.escalamiento_id}\n\nPor favor, revisar la conversación en INBESTIGA · LEADS.` : 'No se encontró el caso solicitado.'; })()}}"
       },
       "id": "derivacion-aviso",
-      "name": "Aviso a persona (DESACTIVADO)",
+      "name": "Aviso por Gmail — Alvaro Romero",
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
-      "disabled": true,
+      "disabled": false,
       "position": [
         1320,
         220
