@@ -15,6 +15,7 @@ const SIGUIENTE: Record<string, string[]> = { SOLICITADA: ['CONFIRMADA', 'CANCEL
 const NOMBRE: Record<string, string> = { SOLICITADA: 'Solicitada', CONFIRMADA: 'Confirmada', REALIZADA: 'Realizada', CANCELADA: 'Cancelada', NO_ASISTIO: 'No asistió' };
 const lunes = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
 const DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const DIAS_VISIBLES = 14;
 const hora = (iso: string) => new Date(iso).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false });
 
 export function Agenda() {
@@ -25,7 +26,7 @@ export function Agenda() {
   const [asesor, setAsesor] = useState('');
   const [estadoCita, setEstadoCita] = useState('');
   const [medio, setMedio] = useState('');
-  const fin = new Date(inicioSemana.getTime() + 7 * 86_400_000);
+  const fin = new Date(inicioSemana.getTime() + DIAS_VISIBLES * 86_400_000);
   const q = useQuery({ queryKey: ['agenda', inicioSemana.toISOString()],
     queryFn: () => api.get<Agenda>('/api/agenda', { desde: inicioSemana.toISOString(), hasta: fin.toISOString() }) });
   useLiveEvents({ oltp: () => cliente.invalidateQueries({ queryKey: ['agenda', inicioSemana.toISOString()] }) });
@@ -58,8 +59,8 @@ export function Agenda() {
       </Encabezado>
 
       <section className="tarjeta flex flex-wrap items-end gap-3 p-4">
-        <div className="text-sm font-semibold">Semana del {inicioSemana.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
-        <span className="nota">{citas.length} de {totalSemana} citas esta semana</span>
+        <div className="text-sm font-semibold">Agenda desde el {inicioSemana.toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
+        <span className="nota">{citas.length} de {totalSemana} citas en los próximos {DIAS_VISIBLES} días</span>
         <label className="ml-auto w-full sm:w-60"><span className="etiqueta-campo">Asesor</span>
           <select className={`campo ${asesor ? 'border-tinta font-medium' : ''}`} value={asesor} onChange={(e) => setAsesor(e.target.value)}>
             <option value="">Todos</option>{q.data?.asesores.map((a) => <option key={a.asesor_id} value={a.asesor_id}>{a.nombre}</option>)}</select></label>
@@ -73,18 +74,19 @@ export function Agenda() {
           onClick={() => { setAsesor(''); setEstadoCita(''); setMedio(''); }}>✕ Limpiar ({filtrosActivos})</button>}
       </section>
 
-      {solapadas.length > 0 && <Aviso>{solapadas.length} citas solapadas esta semana (mismo asesor y horario). Revísalas en Auditoría.</Aviso>}
+      {solapadas.length > 0 && <Aviso>{solapadas.length} citas solapadas en este periodo (mismo asesor y horario). Revísalas en Auditoría.</Aviso>}
       {q.isError && <Aviso>{(q.error as Error).message}</Aviso>}
       {estado.isError && <Aviso>{(estado.error as Error).message}</Aviso>}
 
-      <div className="overflow-x-auto">
-        <div className="grid min-w-[980px] grid-cols-7 gap-2">
-          {DIAS.map((dn, i) => {
+      <div className="overflow-x-auto pb-2" aria-label="Fechas de la agenda; desplázate horizontalmente para ver más días">
+        <div className="grid min-w-[2240px] grid-cols-[repeat(14,minmax(0,1fr))] gap-2">
+          {Array.from({ length: DIAS_VISIBLES }, (_, i) => {
             const dia = new Date(inicioSemana.getTime() + i * 86_400_000);
+            const dn = DIAS[dia.getDay() === 0 ? 6 : dia.getDay() - 1];
             const delDia = citas.filter((c) => new Date(c.inicio).toDateString() === dia.toDateString());
             const esHoy = dia.toDateString() === new Date().toDateString();
             return (
-              <section key={dn} className={`tarjeta flex min-h-[260px] flex-col p-2 ${esHoy ? 'border-tinta' : ''}`} aria-label={dia.toLocaleDateString('es-PE')}>
+              <section key={dia.toISOString()} className={`tarjeta flex min-h-[260px] flex-col p-2 ${esHoy ? 'border-tinta' : ''}`} aria-label={dia.toLocaleDateString('es-PE')}>
                 <h2 className="px-1 pb-2 text-xs font-semibold text-tinta-3">{dn} {dia.getDate()}{esHoy ? ' · hoy' : ''}</h2>
                 <ul className="flex flex-col gap-2">
                   {delDia.map((c) => (
