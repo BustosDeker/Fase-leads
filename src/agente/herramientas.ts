@@ -571,14 +571,20 @@ export const HERRAMIENTAS = {
         SELECT inicio, fin FROM dbo.CITA_VIRTUAL WHERE asesor_id = @a AND estado <> 'CANCELADA' AND fin > SYSDATETIME() AND inicio < DATEADD(DAY, 8, SYSDATETIME())`);
       const ocupadas = r.recordset.map((x: any) => [new Date(x.inicio).getTime(), new Date(x.fin).getTime()]);
       const libres: string[] = [];
+      const legibles: string[] = [];
       const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 2);
       for (let i = 0; i < 24 * 8 && libres.length < 5; i++, d.setHours(d.getHours() + 1)) {
-        if (d.getDay() === 0 || d.getHours() < 9 || d.getHours() > 18) continue;
+        if (d.getDay() === 0 || d.getDay() === 6 || d.getHours() < 9 || d.getHours() > 18) continue;
         const ini = d.getTime(), fin = ini + 45 * 60_000;
         if (ocupadas.some(([a, b]) => ini < b && a < fin)) continue;
         libres.push(fechaLocalIso(d));
+        legibles.push(etiquetaLegible(d));
       }
-      return { asesor_id: asesorId, horarios: libres, medios: ['Google Meet', 'Zoom', 'Llamada de WhatsApp'], nota: 'Fechas en hora de Perú (AAAA-MM-DDTHH:mm).' };
+      return {
+        asesor_id: asesorId, horarios: libres, horarios_legibles: legibles,
+        medios: ['Google Meet', 'Zoom', 'Llamada de WhatsApp'],
+        nota: 'Fechas en hora de Perú. "horarios" es AAAA-MM-DDTHH:mm (úsalo tal cual para agendar_cita). "horarios_legibles" ya trae el día de la semana correcto en español calculado por el sistema: cópialo literal al escribirle al estudiante, no calcules tú el día de la semana a partir de la fecha.',
+      };
     },
   }),
 
@@ -660,6 +666,15 @@ export const definiciones = (estado?: string | null): HerramientaLLM[] => {
 function fechaLocalIso(d: Date) {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+const DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const MESES_ABREV = ['ene.', 'feb.', 'mar.', 'abr.', 'may.', 'jun.', 'jul.', 'ago.', 'sep.', 'oct.', 'nov.', 'dic.'];
+/** Día de la semana + fecha + hora ya resueltos por el sistema, para que el modelo no tenga que calcular
+ *  el día de la semana por su cuenta a partir de una fecha ISO (eso le ha fallado antes). */
+function etiquetaLegible(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${DIAS_SEMANA[d.getDay()]} ${d.getDate()} ${MESES_ABREV[d.getMonth()]} ${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 /** Asesor comercial de la oportunidad, o el comercial activo con menos citas próximas. */
