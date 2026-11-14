@@ -159,6 +159,8 @@ export const HERRAMIENTAS = {
     entrada: z.object({}).passthrough(),
     async ejecutar(cx) {
       const { oportunidadId } = exigirOportunidad(cx);
+      if (!['APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(cx.estado ?? ''))
+        return { ok: false, error: `No se puede hablar de servicios ni precios todavía (estado: ${cx.estado ?? 'sin estado'}). Usa calificar_aptitud primero.` };
       if (!cx.perfil) return { ok: false, error: 'Falta carrera o etapa académica para consultar una tarifa.' };
       const r = await (await oltp()).request().input('o', sql.Int, oportunidadId).input('c', sql.Int, cx.perfil.carreraId)
         .input('e', sql.VarChar(50), cx.perfil.etapa).query(`
@@ -188,6 +190,8 @@ export const HERRAMIENTAS = {
     entrada: z.object({ servicio_id: z.number().int().positive() }),
     async ejecutar(cx, e) {
       const { oportunidadId } = exigirOportunidad(cx);
+      if (!['APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(cx.estado ?? ''))
+        return { ok: false, error: `No se puede hablar de servicios ni precios todavía (estado: ${cx.estado ?? 'sin estado'}). Usa calificar_aptitud primero.` };
       const r = await (await oltp()).request().input('o', sql.Int, oportunidadId).input('s', sql.Int, e.servicio_id)
         .input('c', sql.Int, cx.perfil?.carreraId ?? 0).input('et', sql.VarChar(50), cx.perfil?.etapa ?? null).query(`
           SELECT s.servicio_id, s.nombre, s.familia, s.paquete, s.modalidad, s.tipo_servicio, s.precio_referencia,
@@ -381,7 +385,7 @@ export const HERRAMIENTAS = {
       const resumen = resumenDiagnostico(cx);
       const r = await enTransaccion(await oltp(), (tx) => entregarDiagnostico(tx, cx.diagnostico!.id, resumen, 'AGENTE', oportunidadId));
       return { ok: true, diagnosticoId: cx.diagnostico!.id, fecha_entrega: r.fechaEntrega, horas_desde_solicitud: Number(r.horas.toFixed(2)), resumen,
-        siguiente: 'Verificar requisitos mínimos con calificar_aptitud antes de cotizar.' };
+        siguiente: 'No uses calificar_aptitud todavía. Primero confirma con el estudiante (en un turno aparte, tras su respuesta) si quiere ver la cotización; solo si dice que sí, usa calificar_aptitud.' };
     },
   }),
 
@@ -415,6 +419,8 @@ export const HERRAMIENTAS = {
       esquema: objeto(parametrosCotizacion, ['servicio_id']) },
     entrada: entradaCotizacion,
     async ejecutar(cx, e) {
+      if (!['APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(cx.estado ?? ''))
+        return { ok: false, error: `No se puede hablar de precios todavía (estado: ${cx.estado ?? 'sin estado'}). Usa calificar_aptitud primero.` };
       const s = await simularCotizacion(await oltp(), solicitud(cx, e));
       const q = s.cotizacion;
       return { servicio: s.servicio.nombre, precio_base: q.precioBase, extras: q.montoExtras, recargos: q.recargo, descuentos: q.descuento,
@@ -473,7 +479,7 @@ export const HERRAMIENTAS = {
   }),
 
   registrar_respuesta_propuesta: h({
-    def: { nombre: 'registrar_respuesta_propuesta', descripcion: 'Registra la respuesta del estudiante a la propuesta vigente. ACEPTA solo con aceptación expresa (la oportunidad pasa a ACEPTADA y se coordina el pago con el área de pagos). RECHAZA si la descarta. CONTRAOFERTA si propone otras condiciones.',
+    def: { nombre: 'registrar_respuesta_propuesta', descripcion: 'Registra la respuesta del estudiante a la propuesta vigente. ACEPTA solo con aceptación expresa (la oportunidad pasa a ACEPTADA; después pregúntale el plan de pago y usa generar_enlace_pago). RECHAZA si la descarta. CONTRAOFERTA si propone otras condiciones.',
       esquema: objeto({ respuesta: { type: 'string', enum: ['ACEPTA', 'RECHAZA', 'CONTRAOFERTA'] }, observacion: { type: 'string' } }, ['respuesta']) },
     entrada: z.object({ respuesta: z.enum(['ACEPTA', 'RECHAZA', 'CONTRAOFERTA']), observacion: z.string().max(500).optional() }),
     async ejecutar(cx, e) {
@@ -494,12 +500,24 @@ export const HERRAMIENTAS = {
           await registrarEvento(tx, oportunidadId, 'PROPUESTA_RECHAZADA', 'AGENTE', e.observacion ?? null);
         } else await registrarEvento(tx, oportunidadId, 'CONTRAOFERTA', 'AGENTE', e.observacion ?? null);
       });
-      // Acuerdo aceptado: se transfiere a PAYERS de inmediato (si falla, queda para reintentar desde la pantalla PAYERS).
-      if (e.respuesta === 'ACEPTA') {
-        try { const { transferirAPayers } = await import('../integraciones/integraciones.js'); await transferirAPayers(oportunidadId, 'AGENTE'); }
-        catch (err) { console.error('[agente] transferencia a PAYERS pendiente:', (err as Error).message); }
-      }
-      return { ok: true, respuesta: e.respuesta, siguiente: e.respuesta === 'ACEPTA' ? 'El área de pagos (PAYERS) le enviará el contrato y el enlace de pago; tú no pides datos de pago.' : null };
+      return { ok: true, respuesta: e.respuesta,
+        siguiente: e.respuesta === 'ACEPTA' ? 'Pregúntale si paga al contado o en cuotas (si son cuotas, en cuántas: 2 o 3) y usa generar_enlace_pago con esa elección.' : null };
+    },
+  }),
+
+  generar_enlace_pago: h({
+    def: { nombre: 'generar_enlace_pago', descripcion: 'Genera el enlace de pago de la propuesta ya aceptada, con el plan que confirmó el estudiante (al contado, o en cuotas y en cuántas). Úsalo una sola vez por propuesta; las cuotas quedan fijas desde aquí.',
+      esquema: objeto({ modalidad: { type: 'string', enum: ['CONTADO', 'CUOTAS'] }, numero_cuotas: { type: 'integer', enum: [2, 3], description: 'Obligatorio si modalidad es CUOTAS.' } }, ['modalidad']) },
+    entrada: z.object({ modalidad: z.enum(['CONTADO', 'CUOTAS']), numero_cuotas: z.union([z.literal(2), z.literal(3)]).optional() }),
+    async ejecutar(cx, e) {
+      const { oportunidadId } = exigirOportunidad(cx);
+      if (e.modalidad === 'CUOTAS' && !e.numero_cuotas) return { ok: false, error: 'Falta confirmar en cuántas cuotas (2 o 3).' };
+      try {
+        const { generarEnlacePago } = await import('../negocio/pagos.js');
+        const enlace = await generarEnlacePago(oportunidadId, 'AGENTE', { modalidad: e.modalidad, numeroCuotas: e.numero_cuotas });
+        return { ok: true, enlacePago: enlace.url, monto: enlace.monto, cuota: `${enlace.cuotaActual} de ${enlace.totalCuotas}`,
+          siguiente: 'Envíale el enlace de pago (enlacePago) en tu mensaje ahora mismo, con el monto exacto de esta cuota. No reveles que es simulado ni inventes otra URL.' };
+      } catch (err) { return { ok: false, error: (err as Error).message }; }
     },
   }),
 
@@ -535,7 +553,7 @@ export const HERRAMIENTAS = {
     entrada: z.object({ motivo: z.enum(['NO_INTERESADO', 'PRECIO', 'ENCONTRO_OTRA_OPCION', 'SIN_TIEMPO_O_YA_NO_NECESITA', 'OTRO']), detalle: z.string().trim().max(300).optional() }),
     async ejecutar(cx, e) {
       const { oportunidadId } = exigirOportunidad(cx);
-      if (!['ABIERTA', 'EN_DIAGNOSTICO', 'APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(cx.estado ?? '')) {
+      if (!['ABIERTA', 'EN_DIAGNOSTICO', 'APTA_PARA_COTIZAR', 'EN_NEGOCIACION', 'PENDIENTE_PAGO'].includes(cx.estado ?? '')) {
         return { ok: false, error: `La oportunidad está en ${cx.estado ?? 'sin estado'} y no se puede cerrar desde la conversación.` };
       }
       await enTransaccion(await oltp(), (tx) => transicionar(tx, oportunidadId, 'DESCARTADA', 'AGENTE', `Motivo: ${e.motivo}${e.detalle ? ` · ${e.detalle}` : ''}`.slice(0, 300)));
@@ -620,7 +638,24 @@ export const HERRAMIENTAS = {
 } as const;
 
 export type NombreHerramienta = keyof typeof HERRAMIENTAS;
-export const definiciones = (): HerramientaLLM[] => Object.values(HERRAMIENTAS).map((x) => x.def);
+// Herramientas que se ofrecen al modelo según la etapa: enviar las 23 en cada llamada pesaba ~3.600 tokens y los planes
+// gratuitos de Groq rechazan pedidos grandes. Las reglas de estado de cada herramienta siguen vigentes en el servidor.
+const SIEMPRE = ['consultar_situacion', 'escalar_a_humano', 'registrar_consentimiento', 'cerrar_oportunidad'];
+const AGENDA = ['consultar_horarios', 'agendar_cita', 'cancelar_cita', 'reprogramar_cita'];
+const POR_ETAPA: Record<string, string[]> = {
+  ABIERTA: ['registrar_perfil_academico', 'registrar_preferencias', 'solicitar_diagnostico', 'actualizar_diagnostico_pendiente', 'entregar_diagnostico', 'calificar_aptitud', ...AGENDA],
+  EN_DIAGNOSTICO: ['registrar_perfil_academico', 'registrar_preferencias', 'solicitar_diagnostico', 'actualizar_diagnostico_pendiente', 'entregar_diagnostico', 'calificar_aptitud', 'consultar_catalogo', ...AGENDA],
+  APTA_PARA_COTIZAR: ['consultar_catalogo', 'detalle_servicio', 'simular_cotizacion', 'presentar_propuesta', 'registrar_objecion', 'registrar_respuesta_propuesta', 'generar_enlace_pago', 'registrar_responsable_pago', 'registrar_preferencias', ...AGENDA],
+  EN_NEGOCIACION: ['consultar_catalogo', 'detalle_servicio', 'simular_cotizacion', 'presentar_propuesta', 'registrar_objecion', 'registrar_respuesta_propuesta', 'generar_enlace_pago', 'registrar_responsable_pago', 'registrar_preferencias', ...AGENDA],
+  ACEPTADA: ['generar_enlace_pago', 'registrar_responsable_pago', 'registrar_objecion', ...AGENDA],
+  PENDIENTE_PAGO: ['generar_enlace_pago', 'registrar_responsable_pago', 'registrar_objecion', ...AGENDA],
+  PAYER_CONFIRMADO: AGENDA,
+};
+export const definiciones = (estado?: string | null): HerramientaLLM[] => {
+  const permitidas = estado ? POR_ETAPA[estado] : undefined;
+  const nombres = permitidas ? new Set([...SIEMPRE, ...permitidas]) : null;
+  return Object.entries(HERRAMIENTAS).filter(([n]) => !nombres || nombres.has(n)).map(([, x]) => x.def);
+};
 
 function fechaLocalIso(d: Date) {
   const p = (n: number) => String(n).padStart(2, '0');
@@ -653,12 +688,17 @@ export async function ejecutarHerramienta(cx: ContextoAgente, nombre: string, en
     if (!herr) throw new ErrorNegocio(`Herramienta desconocida: ${nombre}.`);
     if (!cx.consentimiento && !HERRAMIENTAS_SIN_CONSENTIMIENTO.has(nombre))
       throw new ErrorNegocio('Sin consentimiento de datos del estudiante: primero pídelo y regístralo con registrar_consentimiento.');
+    // calificar_aptitud nunca va en el mismo turno que entregar_diagnostico cuando este se llamó aparte (confirmación de
+    // BUYERS): falta la pregunta intermedia de si quiere cotizar. El encadenado automático de solicitar_diagnostico no
+    // pasa por aquí (llama a herr.X.ejecutar directo), así que no se ve afectado.
+    if (nombre === 'calificar_aptitud' && bitacora.some((b) => b.herramienta === 'entregar_diagnostico'))
+      throw new ErrorNegocio('Todavía no preguntaste si quiere ver la cotización. Responde confirmando el diagnóstico y espera su respuesta a esa pregunta antes de calificar_aptitud.');
     resultado = await herr.ejecutar(cx, herr.entrada.parse(entrada ?? {}));
     ok = !(resultado && typeof resultado === 'object' && (resultado as any).ok === false);
     // Mantiene el contexto al día dentro del mismo turno (p. ej. tras otorgar consentimiento).
     if (ok && ['registrar_consentimiento', 'registrar_perfil_academico', 'solicitar_diagnostico', 'actualizar_diagnostico_pendiente',
       'entregar_diagnostico', 'calificar_aptitud',
-      'presentar_propuesta', 'registrar_respuesta_propuesta', 'cerrar_oportunidad', 'agendar_cita', 'cancelar_cita', 'reprogramar_cita'].includes(nombre)) {
+      'presentar_propuesta', 'registrar_respuesta_propuesta', 'generar_enlace_pago', 'cerrar_oportunidad', 'agendar_cita', 'cancelar_cita', 'reprogramar_cita'].includes(nombre)) {
       const { cargarContexto } = await import('./contexto.js');
       Object.assign(cx, await cargarContexto(cx.conversacionId));
     }

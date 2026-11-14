@@ -8,6 +8,7 @@ import { api } from '../api';
 import { fecha, fechaHora } from '../formato';
 import { Aviso, Bloque, BuscadorLead, CampoBusqueda, Chip, ChipEstado, DatoClave, Datos, Encabezado, Iniciales, NOMBRE_ESTADO, ORDEN_ESTADOS,
   PasosEstado, SelectFiltro, Segmentos, Tabla, coincide, soles } from '../components/ui';
+import { useLiveEvents } from '../hooks/useLiveEvents';
 
 type Fila = Record<string, any>;
 interface Ficha { persona: Fila; oportunidades: Fila[]; perfiles: Fila[]; diagnosticos: Fila[]; responsables: Fila[]; propuestas: Fila[];
@@ -95,6 +96,9 @@ export function Ficha() {
   const seccion = params.get('seccion') ?? 'resumen';
   const irSeccion = (s: string) => setParams((prev) => { const n = new URLSearchParams(prev); if (s === 'resumen') n.delete('seccion'); else n.set('seccion', s); return n; }, { replace: true });
   const q = useQuery({ queryKey: ['ficha', leadId], enabled: !!leadId, queryFn: () => api.get<Ficha>(`/api/leads/${leadId}/ficha`) });
+  // El agente escribe en el OLTP por su cuenta (al responder por WhatsApp); sin esta suscripción la ficha
+  // solo se actualizaría al recargar la página manualmente.
+  useLiveEvents({ oltp: (d: { leadId?: number | null }) => { if (!leadId || !d.leadId || d.leadId === leadId) cliente.invalidateQueries({ queryKey: ['ficha', leadId] }); } });
   const f = q.data;
   const opId = Number(params.get('op')) || f?.oportunidades[0]?.oportunidad_id;
   const op = f?.oportunidades.find((o) => o.oportunidad_id === opId);

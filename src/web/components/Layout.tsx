@@ -24,8 +24,6 @@ const FASES = [
   { n: 1, id: 'buyers', t: 'BUYERS' },
   { n: 2, id: 'leads', t: 'LEADS' },
   { n: 3, id: 'payers', t: 'PAYERS' },
-  { n: 4, id: 'customers', t: 'CUSTOMERS' },
-  { n: 5, id: 'turned', t: 'TURNED' },
 ];
 
 function Indicador({ etiqueta, ok, texto }: { etiqueta: string; ok: boolean | null; texto: string }) {

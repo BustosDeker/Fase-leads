@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fechaHora } from '../formato';
 import { useLiveEvents } from '../hooks/useLiveEvents';
-import { Aviso, Bloque, BuscadorLead, CampoBusqueda, Chip, ChipEstado, Encabezado, SelectFiltro, coincide, useFiltros } from '../components/ui';
+import { Aviso, Bloque, BuscadorLead, CampoBusqueda, Chip, ChipEstado, Encabezado, SelectFiltro, TextoConEnlaces, coincide, useFiltros } from '../components/ui';
 import { ConexionWhatsApp } from '../components/ConexionWhatsApp';
 
 type F = Record<string, any>;
@@ -16,7 +16,7 @@ const NOMBRE_HERRAMIENTA: Record<string, string> = {
   presentar_propuesta: 'Presentó propuesta', registrar_objecion: 'Registró objeción', registrar_respuesta_propuesta: 'Registró respuesta a la propuesta',
   consultar_horarios: 'Consultó horarios', agendar_cita: 'Agendó cita', escalar_a_humano: 'Derivó a una persona',
 };
-const NOMBRE_PROVEEDOR: Record<string, string> = { mock: 'Modo sin IA (reglas)', anthropic: 'Claude (Anthropic)', openai: 'OpenAI', gemini: 'Gemini' };
+const NOMBRE_PROVEEDOR: Record<string, string> = { mock: 'Modo sin IA (reglas)', anthropic: 'Claude (Anthropic)', openai: 'OpenAI', gemini: 'Gemini', groq: 'Groq' };
 const iniciales = (n: string) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
 /** «hace 5 min», «hace 3 h», o la fecha si es de otro día. */
 const haceCuanto = (iso: string) => { const m = (Date.now() - new Date(iso).getTime()) / 60_000;
@@ -228,7 +228,8 @@ function Detalle({ d, alVerFicha }: { d: F; alVerFicha: () => void }) {
             return (
               <div key={m.mensaje_id} className={`flex max-w-[85%] flex-col ${del ? 'self-start items-start' : 'self-end items-end'}`}>
                 <div className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2 text-sm ${del ? 'rounded-bl-sm border border-linea bg-white text-tinta'
-                  : m.emisor === 'BOT' ? 'rounded-br-sm bg-tinta text-white' : 'rounded-br-sm border-2 border-tinta bg-white text-tinta'}`}>{m.contenido}</div>
+                  : m.emisor === 'BOT' ? 'rounded-br-sm bg-tinta text-white' : 'rounded-br-sm border-2 border-tinta bg-white text-tinta'}`}>
+                  <TextoConEnlaces texto={m.contenido} claro={!del && m.emisor === 'BOT'} /></div>
                 <span className="nota mt-0.5">{del ? 'Estudiante' : m.emisor === 'BOT' ? 'Agente' : `Asesor${m.asesor ? ': ' + m.asesor : ''}`} · {fechaHora(m.fecha_hora)}
                   {t && verAuditoria && t.detalle?.herramientas?.length ? ` · ${t.detalle.herramientas.map((h: F) => (NOMBRE_HERRAMIENTA[h.herramienta] ?? h.herramienta) + (h.ok ? '' : ' (falló)')).join(', ')}` : ''}</span>
               </div>

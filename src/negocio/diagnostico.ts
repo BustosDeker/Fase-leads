@@ -54,6 +54,11 @@ export async function entregarDiagnostico(tx: sql.Transaction, diagnosticoId: nu
             WHERE diagnostico_id = @d AND estado <> 'ENTREGADO' AND (@o IS NULL OR oportunidad_id = @o)`);
   const d = r.recordset[0];
   if (!d) throw new ErrorNegocio('El diagnóstico no existe o ya fue entregado.');
+  // Normalmente la oportunidad ya está en EN_DIAGNOSTICO (la dejó ahí solicitar_diagnostico). Pero un diagnóstico
+  // puede llegar ya resuelto desde BUYERS con la oportunidad todavía ABIERTA (para medir ese tiempo en los KPI);
+  // al confirmarlo por WhatsApp recién avanza a EN_DIAGNOSTICO.
+  const op = await oportunidadBloqueada(tx, d.oportunidad_id);
+  if (op.estado === 'ABIERTA') await transicionar(tx, d.oportunidad_id, 'EN_DIAGNOSTICO', origen, 'Diagnóstico confirmado por el estudiante');
   const horas = (new Date(d.fecha_entrega).getTime() - new Date(d.fecha_solicitud).getTime()) / 3_600_000;
   await registrarEvento(tx, d.oportunidad_id, 'DIAGNOSTICO_ENTREGADO', origen, `Entregado en ${horas.toFixed(1)} h`);
   return { oportunidadId: d.oportunidad_id as number, fechaSolicitud: d.fecha_solicitud as Date,

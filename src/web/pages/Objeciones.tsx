@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fechaHora } from '../formato';
 import { Aviso, BarraFiltros, Bloque, CampoBusqueda, Chip, Encabezado, SelectFiltro, Segmentos, Tabla, coincide, unicos, useFiltros } from '../components/ui';
+import { useLiveEvents } from '../hooks/useLiveEvents';
 
 type F = Record<string, any>;
 const motivo = (m: string) => m.replaceAll('_', ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
@@ -16,6 +17,7 @@ export function Objeciones() {
   const cliente = useQueryClient();
   const { f, fijar, activos } = useFiltros({ vista: 'cola', texto: '', grupo: '', resultado: '', destino: '' });
   const q = useQuery({ queryKey: ['objeciones'], queryFn: () => api.get<{ objeciones: F[]; escalamientos: F[]; catalogo: F[] }>('/api/objeciones') });
+  useLiveEvents({ oltp: () => cliente.invalidateQueries({ queryKey: ['objeciones'] }) });
   const atender = useMutation({ mutationFn: (id: number) => api.post(`/api/escalamientos/${id}/atender`), onSuccess: () => cliente.invalidateQueries({ queryKey: ['objeciones'] }) });
   const ficha = (x: F) => x.lead_id && navegar(`/leads/ficha?lead=${x.lead_id}&op=${x.oportunidad_id ?? ''}`);
 

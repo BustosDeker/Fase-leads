@@ -8,7 +8,10 @@ import { esquemaFiltros } from '../kpi/consultas.js';
 import { mart, oltp, sql } from '../db.js';
 import { publicar } from './eventos.js';
 import { buscarCandidatos, ejecutarSeguimiento } from '../agente/seguimiento.js';
+import { buscarCandidatosCobranza, ejecutarCobranza } from '../negocio/cobranza.js';
+import { enviarEnlacesCuotasVencidas } from '../negocio/pagos.js';
 import { tokenValido } from '../integraciones/integraciones.js';
+import { borrarKey, guardarConfiguracion, leerConfiguracion, PROVEEDORES, type Slot } from '../agente/configuracionAgente.js';
 
 const id = z.coerce.number().int().positive();
 const limiteDerivaciones = 100;
@@ -63,7 +66,7 @@ export function rutasAgente(app: FastifyInstance, dependencias: Partial<Dependen
   const buscar = dependencias.buscarCandidatos ?? buscarCandidatos;
   const ejecutar = dependencias.ejecutarSeguimiento ?? ejecutarSeguimiento;
   const derivacionesPendientes = dependencias.listarDerivacionesPendientes ?? listarDerivacionesPendientes;
-  app.get('/api/agente/estado', async () => estadoAgente());
+  app.get('/api/agente/estado', async () => await estadoAgente());
 
   app.get('/api/agente/seguimiento/candidatos', async (req, reply) => {
     if (!autenticarSeguimiento(req, reply)) return;
@@ -79,6 +82,27 @@ export function rutasAgente(app: FastifyInstance, dependencias: Partial<Dependen
     if (b.ahora && !/^(1|true|si|sí|yes)$/i.test(process.env.AGENTE_PERMITIR_TIEMPO_SIMULADO || ''))
       return reply.code(400).send({ error: 'La simulación de tiempo está desactivada.' });
     return ejecutar({ ahora: b.ahora, simular: b.dryRun });
+  });
+
+  app.get('/api/agente/cobranza/candidatos', async (req, reply) => {
+    if (!autenticarSeguimiento(req, reply)) return;
+    const q = z.object({ ahora: z.coerce.date().optional() }).parse(req.query);
+    if (q.ahora && !/^(1|true|si|sí|yes)$/i.test(process.env.AGENTE_PERMITIR_TIEMPO_SIMULADO || ''))
+      return reply.code(400).send({ error: 'La simulación de tiempo está desactivada.' });
+    return { ahora: q.ahora ?? new Date(), candidatos: await buscarCandidatosCobranza(q.ahora) };
+  });
+
+  app.post('/api/agente/cobranza/ejecutar', async (req, reply) => {
+    if (!autenticarSeguimiento(req, reply)) return;
+    const b = z.object({ dryRun: z.boolean().optional().default(false), ahora: z.coerce.date().optional() }).parse(req.body ?? {});
+    if (b.ahora && !/^(1|true|si|sí|yes)$/i.test(process.env.AGENTE_PERMITIR_TIEMPO_SIMULADO || ''))
+      return reply.code(400).send({ error: 'La simulación de tiempo está desactivada.' });
+    return ejecutarCobranza({ ahora: b.ahora, simular: b.dryRun });
+  });
+
+  app.post('/api/agente/cuotas/ejecutar', async (req, reply) => {
+    if (!autenticarSeguimiento(req, reply)) return;
+    return enviarEnlacesCuotasVencidas();
   });
 
   app.get('/api/agente/derivaciones/pendientes', async (req, reply) => {
@@ -148,4 +172,18 @@ export function rutasAgente(app: FastifyInstance, dependencias: Partial<Dependen
   });
 
   app.post('/api/tablero/explicar', async (req) => explicarTablero(esquemaFiltros.parse(req.body ?? {}), await plazos()));
+
+  // ---------------- Configuración del proveedor de IA (principal y de respaldo) — solo administrador
+  app.get('/api/agente/configuracion', async () => ({ slots: await leerConfiguracion() }));
+  app.post('/api/agente/configuracion/:slot', async (req) => {
+    const { slot } = z.object({ slot: z.enum(['PRIMARIO', 'SECUNDARIO']) }).parse(req.params);
+    const b = z.object({ proveedor: z.enum(PROVEEDORES), modelo: z.string().max(80).optional(), apiKey: z.string().min(8).max(300).optional(), activo: z.boolean() }).parse(req.body);
+    await guardarConfiguracion(slot as Slot, b);
+    return { slots: await leerConfiguracion() };
+  });
+  app.delete('/api/agente/configuracion/:slot/clave', async (req) => {
+    const { slot } = z.object({ slot: z.enum(['PRIMARIO', 'SECUNDARIO']) }).parse(req.params);
+    await borrarKey(slot as Slot);
+    return { slots: await leerConfiguracion() };
+  });
 }

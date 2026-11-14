@@ -25,6 +25,7 @@ import { Auditoria } from './pages/Auditoria';
 import { Conversaciones } from './pages/Conversaciones';
 import { Fase } from './pages/Fases';
 import { Plataforma } from './pages/Plataforma';
+import { PaginaPago } from './pages/PaginaPago';
 
 const cliente = new QueryClient({ defaultOptions: { queries: { staleTime: 15_000, retry: 1, refetchOnWindowFocus: false } } });
 
@@ -32,29 +33,35 @@ createRoot(document.getElementById('raiz')!).render(
   <StrictMode>
     <QueryClientProvider client={cliente}>
       <BrowserRouter>
-        <ConSesion>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Navigate to="/leads/tablero" replace />} />
-            <Route path="/leads" element={<Navigate to="/leads/tablero" replace />} />
-            <Route path="/leads/tablero" element={<Tablero />} />
-            <Route path="/leads/ficha" element={<Ficha />} />
-            <Route path="/leads/pipeline" element={<Pipeline />} />
-            <Route path="/leads/cotizador" element={<Cotizador />} />
-            <Route path="/leads/agenda" element={<Agenda />} />
-            <Route path="/leads/diagnosticos" element={<Diagnosticos />} />
-            <Route path="/leads/objeciones" element={<Objeciones />} />
-            <Route path="/leads/consentimiento" element={<Consentimiento />} />
-            <Route path="/leads/auditoria" element={<Auditoria />} />
-            <Route path="/leads/conversaciones" element={<Conversaciones />} />
-            <Route path="/fase/:fase" element={<Fase />} />
-            <Route path="/plataforma" element={<Plataforma />} />
-            <Route path="/evidencias" element={<Evidencias />} />
-            <Route path="/demo" element={<Demo />} />
-            <Route path="*" element={<Pendiente />} />
-          </Routes>
-        </Layout>
-        </ConSesion>
+        <Routes>
+          {/* Pública: la abre el estudiante desde el enlace de WhatsApp, sin sesión del panel. */}
+          <Route path="/pagar/:token" element={<PaginaPago />} />
+          <Route path="*" element={
+            <ConSesion>
+              <Layout>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/leads/tablero" replace />} />
+                  <Route path="/leads" element={<Navigate to="/leads/tablero" replace />} />
+                  <Route path="/leads/tablero" element={<Tablero />} />
+                  <Route path="/leads/ficha" element={<Ficha />} />
+                  <Route path="/leads/pipeline" element={<Pipeline />} />
+                  <Route path="/leads/cotizador" element={<Cotizador />} />
+                  <Route path="/leads/agenda" element={<Agenda />} />
+                  <Route path="/leads/diagnosticos" element={<Diagnosticos />} />
+                  <Route path="/leads/objeciones" element={<Objeciones />} />
+                  <Route path="/leads/consentimiento" element={<Consentimiento />} />
+                  <Route path="/leads/auditoria" element={<Auditoria />} />
+                  <Route path="/leads/conversaciones" element={<Conversaciones />} />
+                  <Route path="/fase/:fase" element={<Fase />} />
+                  <Route path="/plataforma" element={<Plataforma />} />
+                  <Route path="/evidencias" element={<Evidencias />} />
+                  <Route path="/demo" element={<Demo />} />
+                  <Route path="*" element={<Pendiente />} />
+                </Routes>
+              </Layout>
+            </ConSesion>
+          } />
+        </Routes>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

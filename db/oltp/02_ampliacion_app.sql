@@ -16,6 +16,8 @@
    8. TRANSICION_ESTADO_OPORTUNIDAD + OPORTUNIDAD_EVENTO + trigger de validacion
    9. AGENTE_TURNO (auditoria: mensaje, tools, latencia, modelo)
   10. CITA_VIRTUAL.enlace (enlace opcional de Google Meet/Zoom exigido por Tabla 7)
+  11. PENDIENTE_PAGO (pasarela de pago simulada): estado, transiciones y token en ENLACE_PAGO
+  12. CONFIGURACION_AGENTE (proveedor de IA principal y de respaldo, editable desde el panel)
 ==============================================================================*/
 USE INBESTIGA_TESIS;
 GO
@@ -281,4 +283,59 @@ GO
 */
 IF COL_LENGTH('dbo.CITA_VIRTUAL', 'enlace') IS NULL
     ALTER TABLE dbo.CITA_VIRTUAL ADD enlace NVARCHAR(300) NULL;
+GO
+
+/*------------------------------------------------------------------ 11. PENDIENTE_PAGO (pasarela de pago simulada)
+ Al aceptar la propuesta, LEADS ya no transfiere a PAYERS y espera: genera su propio enlace de pago
+ (ENLACE_PAGO + ORDEN_PAGO, Bloque E del informe) y lo envia por WhatsApp. La oportunidad queda en
+ PENDIENTE_PAGO hasta que el estudiante paga (PAYER_CONFIRMADO) o decide no pagar (DESCARTADA).
+*/
+IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_OPORT_ESTADO'
+           AND definition NOT LIKE '%PENDIENTE_PAGO%')
+    ALTER TABLE dbo.OPORTUNIDAD_COMERCIAL DROP CONSTRAINT CK_OPORT_ESTADO;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_OPORT_ESTADO')
+    ALTER TABLE dbo.OPORTUNIDAD_COMERCIAL ADD CONSTRAINT CK_OPORT_ESTADO CHECK (estado IN
+        ('ABIERTA','EN_DIAGNOSTICO','APTA_PARA_COTIZAR','EN_NEGOCIACION','ACEPTADA','PENDIENTE_PAGO',
+         'TRANSFERIDA','PAYER_CONFIRMADO','DESCARTADA'));
+GO
+
+INSERT INTO dbo.TRANSICION_ESTADO_OPORTUNIDAD (estado_origen, estado_destino, evento)
+SELECT v.o, v.d, v.e
+FROM (VALUES
+    ('ACEPTADA',       'PENDIENTE_PAGO',   'ENLACE_PAGO_ENVIADO'),
+    ('PENDIENTE_PAGO',  'PAYER_CONFIRMADO', 'PAGO_CONFIRMADO'),
+    ('PENDIENTE_PAGO',  'DESCARTADA',       'DESCARTE')
+) v(o, d, e)
+WHERE NOT EXISTS (SELECT 1 FROM dbo.TRANSICION_ESTADO_OPORTUNIDAD t WHERE t.estado_origen = v.o AND t.estado_destino = v.d);
+GO
+
+-- Token publico del enlace (la URL que recibe el estudiante por WhatsApp; el informe no lo preveia)
+-- y la fecha de su primer clic (para saber si abrio la pagina antes de recordarle que pague).
+IF COL_LENGTH('dbo.ENLACE_PAGO', 'token') IS NULL
+    ALTER TABLE dbo.ENLACE_PAGO ADD token VARCHAR(40) NULL;
+GO
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UQ_ENLACE_PAGO_TOKEN')
+    CREATE UNIQUE INDEX UQ_ENLACE_PAGO_TOKEN ON dbo.ENLACE_PAGO(token) WHERE token IS NOT NULL;
+GO
+IF COL_LENGTH('dbo.ENLACE_PAGO', 'fecha_primer_clic') IS NULL
+    ALTER TABLE dbo.ENLACE_PAGO ADD fecha_primer_clic DATETIME2 NULL;
+GO
+
+/*------------------------------------------------------------------ 12. CONFIGURACION_AGENTE
+ Proveedor de IA principal y uno de respaldo, editables desde el panel sin tocar .env ni el codigo.
+ La API key se guarda cifrada (AES-256-GCM con SESSION_SECRET); nunca se lee en texto plano fuera del
+ servidor. Sin filas aqui, el agente sigue usando las variables de entorno como siempre.
+*/
+IF OBJECT_ID('dbo.CONFIGURACION_AGENTE') IS NULL
+CREATE TABLE dbo.CONFIGURACION_AGENTE (
+    slot             VARCHAR(10) NOT NULL PRIMARY KEY,
+    proveedor        VARCHAR(20) NOT NULL,
+    modelo           VARCHAR(80) NULL,
+    api_key_cifrada  NVARCHAR(600) NULL,
+    activo           BIT NOT NULL DEFAULT 1,
+    actualizado      DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+    CONSTRAINT CK_CONFIG_AGENTE_SLOT CHECK (slot IN ('PRIMARIO','SECUNDARIO')),
+    CONSTRAINT CK_CONFIG_AGENTE_PROVEEDOR CHECK (proveedor IN ('mock','anthropic','openai','gemini','groq'))
+);
 GO

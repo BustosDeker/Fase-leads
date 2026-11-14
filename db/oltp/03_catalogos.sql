@@ -205,9 +205,32 @@ INSERT INTO dbo.PLANTILLA_MENSAJE (nombre, categoria, texto, aprobada_meta, fech
 SELECT v.nombre, v.cat, v.texto, 0, NULL, 1
 FROM (VALUES
     (N'Seguimiento de propuesta', 'PROPUESTA', N'Hola {nombre}, ¿pudiste revisar la propuesta v{version}? Sigue vigente hasta el {vigencia}. Si prefieres, coordinamos una llamada.'),
-    (N'Recordatorio de cita',     'OTRO',      N'Hola {nombre}, te recordamos tu cita virtual el {fecha} a las {hora}. Enlace: {enlace}.')
+    (N'Recordatorio de cita',     'OTRO',      N'Hola {nombre}, te recordamos tu cita virtual el {fecha} a las {hora}. Enlace: {enlace}.'),
+    (N'Recordatorio de pago',     'COBRANZA',  N'Hola {nombre}, vimos que aún no completas tu pago de S/ {monto}. Aquí tienes el enlace nuevamente: {enlace}. Cualquier duda, cuéntame por aquí.')
 ) v(nombre, cat, texto)
 WHERE NOT EXISTS (SELECT 1 FROM dbo.PLANTILLA_MENSAJE p WHERE p.nombre = v.nombre);
+GO
+
+/*------------------------------------------------------------------ Medios y modalidades de pago (pasarela simulada) */
+INSERT INTO dbo.MEDIO_PAGO (metodo, proveedor, canal, verificacion, activo)
+SELECT v.metodo, v.proveedor, v.canal, v.verif, 1
+FROM (VALUES
+    (N'Tarjeta de crédito o débito', N'Culqi', N'PASARELA', 'PASARELA'),
+    (N'Yape',                        N'Culqi', N'BILLETERA', 'PASARELA'),
+    (N'Transferencia o depósito',    NULL,     N'BANCO',     'MANUAL')
+) v(metodo, proveedor, canal, verif)
+WHERE NOT EXISTS (SELECT 1 FROM dbo.MEDIO_PAGO m WHERE m.metodo = v.metodo);
+GO
+
+INSERT INTO dbo.MODALIDAD_PAGO (nombre, numero_cuotas, es_contado, condicion)
+SELECT v.nombre, v.cuotas, v.contado, v.cond
+FROM (VALUES
+    (N'Por confirmar', 1, 0, NULL),               -- se asigna al generar el enlace; se reemplaza al pagar
+    (N'Al contado',    1, 1, NULL),
+    (N'En 2 cuotas',   2, 0, N'50% / 50%'),
+    (N'En 3 cuotas',   3, 0, N'34% / 33% / 33%')
+) v(nombre, cuotas, contado, cond)
+WHERE NOT EXISTS (SELECT 1 FROM dbo.MODALIDAD_PAGO p WHERE p.nombre = v.nombre);
 GO
 
 -- El catálogo de objeciones y las transiciones de estado se cargan en 02_ampliacion_app.sql

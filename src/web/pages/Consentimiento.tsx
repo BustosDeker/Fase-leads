@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fecha } from '../formato';
 import { Aviso, BarraFiltros, Bloque, CampoBusqueda, Chip, Encabezado, SelectFiltro, Segmentos, Tabla, coincide, useFiltros } from '../components/ui';
+import { useLiveEvents } from '../hooks/useLiveEvents';
 
 type C = Record<string, any>;
 const estadoDe = (c: C) => (c.no_contactar ? 'revocado' : c.consentimiento_contacto ? 'vigente' : 'sin');
@@ -14,6 +15,7 @@ export function Consentimiento() {
   const cliente = useQueryClient();
   const { f, fijar, activos, limpiar } = useFiltros({ estado: '', texto: '', datos: '' });
   const q = useQuery({ queryKey: ['consentimientos'], queryFn: () => api.get<C[]>('/api/consentimientos') });
+  useLiveEvents({ oltp: () => cliente.invalidateQueries({ queryKey: ['consentimientos'] }) });
   const cambiar = useMutation({
     mutationFn: ({ id, accion }: { id: number; accion: 'OTORGA' | 'REVOCA' }) =>
       api.post(`/api/contactos/${id}/consentimiento`, { accion, evidencia: accion === 'REVOCA' ? 'Revocado desde el panel a pedido del titular' : 'Otorgado desde el panel con confirmación del titular' }),

@@ -95,7 +95,7 @@ export function rutasLeads(app: FastifyInstance) {
     const { leadId } = z.object({ leadId: id }).parse(req.params);
     await enTransaccion(await oltp(), async (tx) => {
       const existe = await new sql.Request(tx).input('l', sql.Int, leadId).query(`
-        SELECT c.contacto_id, b.buyer_id,
+        SELECT c.contacto_id, b.buyer_id, c.es_demo,
           CASE WHEN EXISTS (SELECT 1 FROM dbo.PAYER p WHERE p.lead_id = l.lead_id)
                  OR EXISTS (SELECT 1 FROM dbo.HONORARIO h WHERE h.lead_id = l.lead_id
                             OR EXISTS (SELECT 1 FROM dbo.DIAGNOSTICO d WHERE d.lead_id = l.lead_id AND d.diagnostico_id = h.diagnostico_id))
@@ -106,7 +106,8 @@ export function rutasLeads(app: FastifyInstance) {
         JOIN dbo.CONTACTO c ON c.contacto_id = b.contacto_id WHERE l.lead_id = @l`);
       const row = existe.recordset[0];
       if (!row) throw new ErrorNegocio('No existe ese lead.', 404);
-      if (row.tiene_registros_financieros)
+      // Un dato real con historial financiero no se borra nunca; uno de prueba sí, para poder repetir la simulación de pago.
+      if (row.tiene_registros_financieros && !row.es_demo)
         throw new ErrorNegocio('No se puede eliminar este lead porque tiene registros de pago o honorarios. Conserva su historial financiero.', 409);
 
       await new sql.Request(tx).input('l', sql.Int, leadId).query(`
@@ -125,6 +126,8 @@ export function rutasLeads(app: FastifyInstance) {
         INSERT @propuestas SELECT propuesta_id FROM dbo.PROPUESTA WHERE lead_id = @l;
         DECLARE @citas TABLE (id INT PRIMARY KEY);
         INSERT @citas SELECT cita_id FROM dbo.CITA_VIRTUAL WHERE oportunidad_id IN (SELECT id FROM @oportunidades);
+        DECLARE @ordenes TABLE (id INT PRIMARY KEY);
+        INSERT @ordenes SELECT orden_pago_id FROM dbo.ORDEN_PAGO WHERE propuesta_id IN (SELECT id FROM @propuestas);
 
         DELETE FROM dbo.AGENTE_TURNO WHERE conversacion_id IN (SELECT id FROM @conversaciones)
           OR oportunidad_id IN (SELECT id FROM @oportunidades)
@@ -138,6 +141,12 @@ export function rutasLeads(app: FastifyInstance) {
         DELETE FROM dbo.TRANSFERENCIA_PAYER WHERE oportunidad_id IN (SELECT id FROM @oportunidades)
           OR propuesta_id IN (SELECT id FROM @propuestas);
         DELETE FROM dbo.CONVERSION_PAYER_REF WHERE oportunidad_id IN (SELECT id FROM @oportunidades);
+        DELETE FROM dbo.ALERTA_COBRANZA WHERE orden_pago_id IN (SELECT id FROM @ordenes);
+        DELETE FROM dbo.PAGO WHERE orden_pago_id IN (SELECT id FROM @ordenes);
+        DELETE FROM dbo.PAYER WHERE lead_id = @l;
+        DELETE FROM dbo.ENLACE_PAGO WHERE orden_pago_id IN (SELECT id FROM @ordenes);
+        DELETE FROM dbo.CUOTA_PAGO WHERE orden_pago_id IN (SELECT id FROM @ordenes);
+        DELETE FROM dbo.ORDEN_PAGO WHERE orden_pago_id IN (SELECT id FROM @ordenes);
         DELETE FROM dbo.CONTRATO WHERE propuesta_id IN (SELECT id FROM @propuestas);
         DELETE FROM dbo.PROPUESTA_AJUSTE WHERE propuesta_id IN (SELECT id FROM @propuestas);
         DELETE FROM dbo.PROPUESTA_ENTREGABLE WHERE propuesta_id IN (SELECT id FROM @propuestas);

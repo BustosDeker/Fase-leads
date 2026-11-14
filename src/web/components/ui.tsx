@@ -6,7 +6,7 @@ import { api } from '../api';
 
 export const NOMBRE_ESTADO: Record<string, string> = {
   ABIERTA: 'Abierta', EN_DIAGNOSTICO: 'En diagnóstico', APTA_PARA_COTIZAR: 'Apta para cotizar', EN_NEGOCIACION: 'En negociación',
-  ACEPTADA: 'Aceptada', TRANSFERIDA: 'Transferida a PAYERS', PAYER_CONFIRMADO: 'Confirmada por PAYERS', DESCARTADA: 'Descartada',
+  ACEPTADA: 'Aceptada', PENDIENTE_PAGO: 'Pendiente de pago', TRANSFERIDA: 'Transferida (antiguo)', PAYER_CONFIRMADO: 'Payer', DESCARTADA: 'Descartada',
 };
 export const ORDEN_ESTADOS = Object.keys(NOMBRE_ESTADO);
 
@@ -345,13 +345,14 @@ export function Iniciales({ nombre, grande = false }: { nombre: string; grande?:
 }
 
 /** Etapas del embudo de LEADS (sin «Descartada», que es una salida). */
-const PASOS = ['ABIERTA', 'EN_DIAGNOSTICO', 'APTA_PARA_COTIZAR', 'EN_NEGOCIACION', 'ACEPTADA', 'TRANSFERIDA', 'PAYER_CONFIRMADO'];
+const PASOS = ['ABIERTA', 'EN_DIAGNOSTICO', 'APTA_PARA_COTIZAR', 'EN_NEGOCIACION', 'ACEPTADA', 'PENDIENTE_PAGO', 'PAYER_CONFIRMADO'];
 const PASO_CORTO: Record<string, string> = { ABIERTA: 'Abierta', EN_DIAGNOSTICO: 'Diagnóstico', APTA_PARA_COTIZAR: 'Apta', EN_NEGOCIACION: 'Negociación',
-  ACEPTADA: 'Aceptada', TRANSFERIDA: 'En PAYERS', PAYER_CONFIRMADO: 'Confirmada' };
+  ACEPTADA: 'Aceptada', PENDIENTE_PAGO: 'Pendiente de pago', PAYER_CONFIRMADO: 'Payer' };
 
 /** Barra de etapas de la oportunidad: hechas (●), actual (resaltada) y pendientes. */
 export function PasosEstado({ estado }: { estado: string }) {
-  const i = PASOS.indexOf(estado);
+  // TRANSFERIDA es el paso técnico (ya automático) de leads anteriores a la pasarela de pago: se ve como PENDIENTE_PAGO.
+  const i = PASOS.indexOf(estado === 'TRANSFERIDA' ? 'PENDIENTE_PAGO' : estado);
   if (estado === 'DESCARTADA') return <p className="text-sm text-tinta-2">– Oportunidad descartada: salió del embudo.</p>;
   return (
     <ol className="flex w-full overflow-x-auto" aria-label="Etapas de la oportunidad">
@@ -376,4 +377,14 @@ export function PasosEstado({ estado }: { estado: string }) {
 /** Dato clave compacto para la cabecera de un registro. */
 export function DatoClave({ t, v }: { t: string; v: ReactNode }) {
   return <div className="min-w-0"><div className="text-[11px] font-medium uppercase tracking-wide text-tinta-3">{t}</div><div className="truncate text-sm font-semibold">{v ?? '—'}</div></div>;
+}
+
+const RE_URL = /(https?:\/\/[^\s]+)/g;
+/** Texto de un mensaje con las URL convertidas en enlaces clicables (p. ej. el enlace de pago que manda el agente).
+ *  `texto.split` con un grupo de captura alterna texto normal (par) y coincidencias de URL (impar). */
+export function TextoConEnlaces({ texto, claro = false }: { texto: string; claro?: boolean }) {
+  const partes = texto.split(RE_URL);
+  return <>{partes.map((p, i) => (i % 2 === 1)
+    ? <a key={i} href={p} target="_blank" rel="noreferrer" className={`underline underline-offset-2 ${claro ? 'text-white' : 'text-tinta'}`}>{p}</a>
+    : <span key={i}>{p}</span>)}</>;
 }

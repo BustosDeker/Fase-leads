@@ -15,7 +15,9 @@ before(async () => {
       SELECT TOP 1 cv.conversacion_id
       FROM dbo.CONVERSACION cv JOIN dbo.CONTACTO c ON c.contacto_id = cv.contacto_id
       JOIN dbo.PERFIL_ACADEMICO pa ON pa.contacto_id = c.contacto_id
+      JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.oportunidad_id = cv.oportunidad_id
       WHERE cv.oportunidad_id IS NOT NULL AND c.consentimiento_contacto = 1 AND pa.carrera_id IS NOT NULL
+        AND o.estado IN ('APTA_PARA_COTIZAR', 'EN_NEGOCIACION')
       ORDER BY cv.conversacion_id`);
     conversacionId = r.recordset[0]?.conversacion_id ?? null;
     if (!conversacionId) disponible = false;

@@ -18,6 +18,7 @@ import { resumenEstado as estadoWhatsApp } from '../whatsapp/openwa.js';
 import { estadoAgente, obtenerProveedor } from '../agente/motor.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
 import { iniciarSchedulerSeguimiento } from '../agente/seguimiento.js';
+import { iniciarSchedulerCobranza } from '../negocio/cobranza.js';
 
 const app = Fastify({ logger: { level: 'info' } });
 
@@ -46,7 +47,7 @@ app.get('/api/salud', async () => {
   } catch (err) {
     sqlServer.error = explicarErrorSql(err);
   }
-  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: estadoAgente(), whatsapp: estadoWhatsApp() };
+  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: await estadoAgente(), whatsapp: estadoWhatsApp() };
 });
 
 rutasAuth(app);
@@ -58,6 +59,7 @@ rutasWhatsApp(app);
 rutasIntegraciones(app);
 rutasEvidencias(app);
 iniciarSchedulerSeguimiento();
+iniciarSchedulerCobranza();
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');

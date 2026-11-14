@@ -13,6 +13,8 @@ import { proveedorMock } from './proveedores/mock.js';
 import { proveedorOpenAI } from './proveedores/openai.js';
 import { proveedorGroq } from './proveedores/groq.js';
 import { ErrorProveedorIA, usoEstimado } from './proveedores/comun.js';
+import { proveedoresActivos, responderConRespaldo } from './configuracionAgente.js';
+import { esRespuestaDeMenu, intentarRespuestaRapida } from './respuestasRapidas.js';
 import { guardarResumenMemoria, leerMarcaMemoria, leerResumenMemoria } from './memoria.js';
 import type { MensajeHistorial, ProveedorLLM, UsoTokens } from './tipos.js';
 
@@ -35,6 +37,13 @@ function booleano(v: string | undefined) { return /^(1|true|si|sí|yes)$/i.test(
 function errorSeguro(e: unknown): string {
   if (e instanceof ErrorProveedorIA) return `${e.proveedor} respondió HTTP ${e.status ?? 'sin estado'}.`;
   return String((e as any)?.message ?? e).replace(/(?:sk-[A-Za-z0-9_-]+|AIza[A-Za-z0-9_-]+)/g, '[clave omitida]').slice(0, 300);
+}
+
+
+function fallaTransitoria(e: unknown): boolean {
+  if (e instanceof ErrorProveedorIA) return e.status == null || e.status === 413 || e.status === 429 || e.status >= 500;
+  const n = (e as any)?.name;
+  return n === 'TimeoutError' || n === 'AbortError' || /fetch failed|timeout|ECONNRESET/i.test(String((e as any)?.message ?? ''));
 }
 
 function configuracionInvalida(proveedorSolicitado: string, modelo: string) {
@@ -71,7 +80,13 @@ export function obtenerProveedor(): ProveedorLLM {
   return proveedor;
 }
 export const usoAgente = () => ({ ...acumulado });
-export const estadoAgente = () => ({ proveedor: obtenerProveedor().nombre, modelo: obtenerProveedor().modelo, aviso: avisoProveedor, uso: usoAgente() });
+/** Refleja el proveedor que REALMENTE se usará en el próximo turno: la configuración guardada desde
+ *  el panel (si hay una activa) tiene prioridad sobre LLM_PROVIDER del .env, igual que en procesarTurno. */
+export async function estadoAgente() {
+  const { primario, primarioDesdeBD, secundario } = await proveedoresActivos(obtenerProveedor());
+  return { proveedor: primario.nombre, modelo: primario.modelo, respaldo: secundario ? { proveedor: secundario.nombre, modelo: secundario.modelo } : null,
+    aviso: primarioDesdeBD ? null : avisoProveedor, uso: usoAgente() };
+}
 
 // ------------------------------------------------------------------ cola por conversación
 const colas = new Map<number, Promise<unknown>>();
@@ -112,7 +127,7 @@ export async function guardarMensaje(conversacionId: number, emisor: 'CLIENTE' |
 
 async function historial(conversacionId: number): Promise<MensajeHistorial[]> {
   const r = await (await oltp()).request().input('c', sql.Int, conversacionId).query(`
-    SELECT TOP 30 emisor, contenido FROM dbo.MENSAJE WHERE conversacion_id = @c AND contenido IS NOT NULL ORDER BY fecha_hora DESC, mensaje_id DESC`);
+    SELECT TOP 12 emisor, contenido FROM dbo.MENSAJE WHERE conversacion_id = @c AND contenido IS NOT NULL ORDER BY fecha_hora DESC, mensaje_id DESC`);
   const h: MensajeHistorial[] = [];
   for (const m of r.recordset.reverse()) {
     const rol = m.emisor === 'CLIENTE' ? 'user' : 'assistant';
@@ -230,7 +245,7 @@ export function procesarMensajeEntrante(conversacionId: number, texto: string, i
   return enColaEntrada(conversacionId, async () => {
     const entradaId = await guardarMensaje(conversacionId, 'CLIENTE', texto, { idExterno });
     if (!entradaId) return { directo: { respondio: false, motivo: 'Mensaje duplicado (ya procesado).', mensajeEntradaId: null } };
-    if (debounceMs() === 0) return { directo: await enCola(conversacionId, () => procesarTurno(conversacionId, texto, entradaId)) };
+    if (debounceMs() === 0 || esRespuestaDeMenu(texto)) return { directo: await enCola(conversacionId, () => procesarTurno(conversacionId, texto, entradaId)) };
     return { pendiente: programarDebounce(conversacionId, texto, entradaId) };
   }).then((r: any) => r.directo ?? r.pendiente);
 }
@@ -240,7 +255,7 @@ async function procesarTurno(conversacionId: number, texto: string, entradaId: n
     if (cx.controlHumano || cx.estadoConversacion === 'DERIVADA') return { respondio: false, motivo: 'La conversación está a cargo de una persona.', mensajeEntradaId: entradaId };
     if (cx.noContactar && !FRASE_RECONSENTIMIENTO.test(texto)) return { respondio: false, motivo: 'El estudiante revocó su consentimiento (no contactar).', mensajeEntradaId: entradaId };
 
-    const prov = obtenerProveedor();
+    const envProv = obtenerProveedor();
     if (excedeTurnos(conversacionId)) {
       const ultimo = derivacionesPorLimite.get(conversacionId) ?? 0;
       if (Date.now() - ultimo > 3_600_000) {
@@ -254,7 +269,24 @@ async function procesarTurno(conversacionId: number, texto: string, entradaId: n
       return { respondio: true, respuesta: respuestaLimite, mensajeEntradaId: entradaId, herramientas: [], proveedorFallo: false,
         latenciaMs: 0, turnoId: undefined, uso: { entrada: 0, salida: 0, total: 0 } };
     }
-    const memoria = await actualizarResumenMemoria(conversacionId, cx, prov);
+    // Respuestas predeterminadas (menús a/b/c): estado y respuesta al instante, sin modelo.
+    let notaSistema: string | null = null;
+    const rapida = await intentarRespuestaRapida(cx, texto);
+    if (rapida?.respuesta) {
+      const t0r = Date.now();
+      const fin = await cargarContexto(conversacionId);
+      const salidaId = await guardarMensaje(conversacionId, 'BOT', rapida.respuesta);
+      const turno = await (await oltp()).request().input('c', sql.Int, conversacionId).input('o', sql.Int, fin.oportunidadId)
+        .input('mi', sql.Int, entradaId).input('mo', sql.Int, salidaId).input('p', sql.VarChar, 'mock').input('m', sql.VarChar, 'respuesta-rapida')
+        .input('l', sql.Int, Date.now() - t0r).input('t', sql.NVarChar, JSON.stringify({ herramientas: rapida.herramientas, revision: [] }))
+        .query(`INSERT dbo.AGENTE_TURNO (conversacion_id, oportunidad_id, mensaje_entrada_id, mensaje_salida_id, proveedor_llm, modelo, latencia_ms, tools_json, sospecha_inyeccion, error)
+                OUTPUT INSERTED.turno_id VALUES (@c, @o, @mi, @mo, @p, @m, @l, @t, 0, NULL)`);
+      publicar('oltp', { tipo: 'agente', oportunidadId: fin.oportunidadId, leadId: fin.leadId });
+      return { respondio: true, respuesta: rapida.respuesta, turnoId: turno.recordset[0].turno_id, mensajeEntradaId: entradaId, latenciaMs: Date.now() - t0r,
+        herramientas: rapida.herramientas.map((b) => b.herramienta), uso: { entrada: 0, salida: 0, total: 0 }, proveedorFallo: false };
+    }
+    if (rapida?.nota) { notaSistema = rapida.nota; Object.assign(cx, await cargarContexto(conversacionId)); }
+    const memoria = await actualizarResumenMemoria(conversacionId, cx, envProv);
     if (memoria.uso) {
       acumulado.turnos++;
       acumulado.entrada += memoria.uso.entrada;
@@ -267,20 +299,51 @@ async function procesarTurno(conversacionId: number, texto: string, entradaId: n
     let respuesta = '', error: string | null = null;
     let uso: UsoTokens | undefined;
     let proveedorFallo = false;
+    let prov: ProveedorLLM = envProv;
+    let turnoDecidido = false;              // evita que el intento perdedor de la carrera siga ejecutando herramientas
     try {
       const cat = await catalogos();
-      respuesta = await prov.responder({
-        sistema: promptSistema(cat), contexto: contextoComoTexto({ ...cx, resumenMemoria: leerResumenMemoria(conversacionId) }, sospecha), historial: await historial(conversacionId),
-        herramientas: definiciones(), ejecutar: (n, e) => ejecutarHerramienta(cx, n, e, bitacora), datos: cx, sospechaInyeccion: sospecha,
-      });
-      uso = prov.uso ? { ...prov.uso } : { ...usoEstimado([promptSistema(cat), contextoComoTexto(cx, sospecha), ...(await historial(conversacionId)).map((m) => m.texto)]), salida: Math.ceil(respuesta.length / 4), total: 0 };
+      let historialTurno = await historial(conversacionId);
+      const contextoModelo = () => contextoComoTexto({ ...cx, resumenMemoria: leerResumenMemoria(conversacionId) }, sospecha) + (notaSistema ? `
+Nota del sistema: ${notaSistema}` : '');
+      let ganadora: { resultado: string; proveedor: ProveedorLLM } | null = null;
+      // Con límites de tokens o picos del proveedor (413/429/5xx/tiempo agotado) se espera y se reintenta con menos historial,
+      // en vez de derivar a una persona al primer fallo: hasta ~100 s de paciencia, solo si aún no se ejecutó ninguna herramienta.
+      for (let intento = 0; ; intento++) {
+        try {
+          ganadora = await responderConRespaldo(envProv, (p) => p.responder({
+            sistema: promptSistema(cat, cx.estado), contexto: contextoModelo(), historial: historialTurno,
+            herramientas: definiciones(cx.estado),
+            ejecutar: (n, e) => turnoDecidido ? Promise.resolve(JSON.stringify({ ok: false, error: 'Este turno ya se respondió con otro proveedor.' })) : ejecutarHerramienta(cx, n, e, bitacora),
+            datos: cx, sospechaInyeccion: sospecha,
+          }), () => { turnoDecidido = true; });
+          break;
+        } catch (e: any) {
+          turnoDecidido = false;
+          if (bitacora.length || intento >= 2 || Date.now() - t0 > 100_000 || !fallaTransitoria(e)) throw e;
+          console.warn(`[agente] fallo transitorio (${errorSeguro(e)}); reintento ${intento + 1} con menos historial`);
+          await new Promise((r) => setTimeout(r, 10_000 * (intento + 1)));
+          historialTurno = historialTurno.slice(intento === 0 ? -6 : -2);
+        }
+      }
+      const { resultado, proveedor: ganador } = ganadora!;
+      respuesta = resultado;
+      prov = ganador;
+      uso = prov.uso ? { ...prov.uso } : { ...usoEstimado([promptSistema(cat, cx.estado), contextoComoTexto(cx, sospecha), ...historialTurno.map((m) => m.texto)]), salida: Math.ceil(respuesta.length / 4), total: 0 };
       uso.total = uso.entrada + uso.salida;
     } catch (e: any) {
       proveedorFallo = true;
       error = errorSeguro(e);
       console.error('[agente] turno fallido:', error);
-      respuesta = 'Disculpa, tuve un inconveniente técnico. Derivo tu consulta a una persona del equipo para no hacerte esperar.';
-      try { await escalar(cx, 'BOT_NO_RESPONDE', `El agente no pudo responder: ${error.slice(0, 300)}`); } catch { /* se registra el error del turno igual */ }
+      const previos = (await (await oltp()).request().input('c', sql.Int, conversacionId).query(`
+        SELECT COUNT(*) AS n FROM dbo.AGENTE_TURNO WHERE conversacion_id = @c AND error IS NOT NULL AND fecha > DATEADD(MINUTE, -20, SYSDATETIME())
+          AND turno_id > ISNULL((SELECT MAX(turno_id) FROM dbo.AGENTE_TURNO WHERE conversacion_id = @c AND error IS NULL), 0)`)).recordset[0].n as number;
+      if (previos + 1 >= 3) {
+        respuesta = 'Disculpa, tuve un inconveniente técnico. Derivo tu consulta a una persona del equipo para no hacerte esperar.';
+        try { await escalar(cx, 'BOT_NO_RESPONDE', `El agente no pudo responder: ${error.slice(0, 300)}`); } catch { /* se registra el error del turno igual */ }
+      } else {
+        respuesta = 'Estoy tardando más de lo normal en responderte. Dame un momento y vuelve a escribirme para continuar donde quedamos.';
+      }
     }
     // Montos autorizados: los que devolvieron las herramientas en este turno y la propuesta vigente.
     const fin = await cargarContexto(conversacionId);

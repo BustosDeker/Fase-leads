@@ -1,10 +1,11 @@
 // Diagnósticos: solicitud y entrega con fechas visibles y semáforo del plazo (48 h por defecto).
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fechaHora } from '../formato';
 import { Aviso, BarraFiltros, Bloque, CampoBusqueda, Chip, ChipEstado, Encabezado, Metricas, SelectFiltro, Tabla, coincide, unicos, useFiltros } from '../components/ui';
+import { useLiveEvents } from '../hooks/useLiveEvents';
 
 interface Dx { diagnostico_id: number; oportunidad_id: number; lead_id: number; fecha_solicitud: string; fecha_entrega: string | null; estado: string;
   tema_tesis: string | null; tipo_tesis: string | null; requiere_derivacion: boolean; asesor: string; estudiante: string; estado_oportunidad: string;
@@ -20,9 +21,11 @@ const ORDEN_SIT: Dx['situacion'][] = ['VENCIDO', 'EN_PLAZO', 'A_TIEMPO', 'TARDE'
 
 export function Diagnosticos() {
   const navegar = useNavigate();
+  const cliente = useQueryClient();
   const { f, fijar, activos, limpiar } = useFiltros({ plazo: '48', situacion: '', texto: '', asesor: '' });
   const plazo = Math.max(1, Number(f.plazo) || 48);
   const q = useQuery({ queryKey: ['diagnosticos', plazo], queryFn: () => api.get<Dx[]>('/api/diagnosticos', { plazo }) });
+  useLiveEvents({ oltp: () => cliente.invalidateQueries({ queryKey: ['diagnosticos', plazo] }) });
   const todos = q.data ?? [];
   const datos = useMemo(() => todos.filter((d) => (!f.situacion || d.situacion === f.situacion) && (!f.asesor || d.asesor === f.asesor)
     && coincide(f.texto, d.estudiante, d.tema_tesis, d.oportunidad_id)), [todos, f.situacion, f.asesor, f.texto]);
