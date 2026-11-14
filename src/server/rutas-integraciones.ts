@@ -89,7 +89,8 @@ export function rutasIntegraciones(app: FastifyInstance) {
       SELECT (SELECT COUNT(*) FROM dbo.BUYER) AS buyers, (SELECT COUNT(*) FROM dbo.LEAD) AS leads,
              (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'ACEPTADA') AS aceptadas,
              (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'TRANSFERIDA') AS transferidas,
-             (SELECT COUNT(*) FROM dbo.CONVERSION_PAYER_REF) AS payers_confirmados,
+             (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'PENDIENTE_PAGO') AS pendientes_pago,
+             (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'PAYER_CONFIRMADO') AS payers_confirmados,
              (SELECT COUNT(*) FROM dbo.CUSTOMER) AS customers;
       SELECT estado, COUNT(*) AS n FROM dbo.OPORTUNIDAD_COMERCIAL GROUP BY estado;
       SELECT COUNT(*) AS turnos, AVG(CAST(latencia_ms AS FLOAT)) AS latencia_media, SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS con_error,

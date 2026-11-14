@@ -73,7 +73,7 @@ export function Plataforma() {
   const etapas = d ? [
     { t: 'BUYERS', n: d.embudo.buyers, nota: 'interesados captados', a: '/fase/buyers' },
     { t: 'LEADS', n: d.embudo.leads, nota: 'en negociación', a: '/leads/pipeline' },
-    { t: 'Aceptadas', n: d.embudo.aceptadas + d.embudo.transferidas + d.embudo.payers_confirmados, nota: 'propuestas aceptadas', a: '/fase/payers' },
+    { t: 'Aceptadas', n: d.embudo.aceptadas + d.embudo.pendientes_pago + d.embudo.transferidas + d.embudo.payers_confirmados, nota: 'propuestas aceptadas', a: '/fase/payers' },
     { t: 'PAYERS', n: d.embudo.payers_confirmados, nota: 'contrataciones confirmadas', a: '/fase/payers' },
     { t: 'CUSTOMERS', n: d.embudo.customers, nota: 'en acompañamiento', a: '/fase/customers' },
   ] : [];
