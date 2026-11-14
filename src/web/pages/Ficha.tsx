@@ -183,7 +183,7 @@ export function Ficha() {
                   </label>
                 )}
                 {op && ['APTA_PARA_COTIZAR', 'EN_NEGOCIACION'].includes(op.estado) && <Link className="boton-negro" to={`/leads/cotizador?op=${op.oportunidad_id}`}>Cotizar</Link>}
-                {op && <Link className="boton-claro" to={`/leads/agenda?op=${op.oportunidad_id}`}>Agendar cita</Link>}
+                {op && <Link className="boton-claro" to={`/leads/conversaciones?lead=${p.lead_id}`}>Conversar por WhatsApp</Link>}
                 <button className="boton-claro border-malo-marca text-malo-texto" disabled={eliminarLead.isPending}
                   onClick={() => {
                     if (window.confirm(`¿Eliminar el lead de ${p.nombres} ${p.apellidos} y sus datos de prueba, conversaciones e historial comercial? Esta acción no se puede deshacer. Los leads con pagos u honorarios se conservan y no podrán eliminarse.`))

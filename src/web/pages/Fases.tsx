@@ -79,7 +79,7 @@ function Buyers() {
     universidad: f.universidad, carrera: f.carrera, etapa: f.etapa, sede: f.sede,
     tema: f.tema || undefined, tipoTesis: f.tipoTesis, avanceDeclarado: Number(f.avanceDeclarado),
     tieneEmpresaAplicacion: f.tieneEmpresaAplicacion === 'si', limitaciones: f.limitaciones, fechaLimite: f.fechaLimite,
-  }), onSuccess: () => setF((x) => ({ ...CAMPOS_VACIOS, canal: x.canal })) });
+  }), onSuccess: (r) => navegar(`/leads/ficha?lead=${r.leadId}&op=${r.oportunidadId ?? ''}`) });
   const campo = (k: keyof typeof f, etiqueta: string, extra: F = {}) => (
     <label><span className="etiqueta-campo">{etiqueta}{extra.required && <span className="text-malo-texto"> *</span>}</span>
       <input className="campo" value={f[k]} onChange={(e) => cambiar(k)(e.target.value)} {...extra} /></label>);
@@ -159,8 +159,6 @@ function Buyers() {
           <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-linea pt-4">
             <button className="boton-negro" disabled={crear.isPending || !todoListo}>{crear.isPending ? 'Enviando…' : 'Enviar lead a LEADS'}</button>
             {!todoListo && <span className="nota">Completa los campos marcados con * para habilitar el envío.</span>}
-            {crear.data && <span className="text-sm">{crear.data.creado ? '● Lead creado' : 'ⓘ Ese WhatsApp ya era lead'} (#{crear.data.leadId}){' '}
-              <button type="button" className="underline" onClick={() => navegar(`/leads/ficha?lead=${crear.data!.leadId}&op=${crear.data!.oportunidadId ?? ''}`)}>ver ficha</button></span>}
           </div>
         </form>
         {crear.isError && <div className="mt-3"><Aviso>{(crear.error as Error).message}</Aviso></div>}

@@ -10,6 +10,7 @@ import { publicar } from './eventos.js';
 import { buscarCandidatos, ejecutarSeguimiento } from '../agente/seguimiento.js';
 import { buscarCandidatosCobranza, ejecutarCobranza } from '../negocio/cobranza.js';
 import { enviarEnlacesCuotasVencidas } from '../negocio/pagos.js';
+import { ESTADOS } from '../negocio/oportunidad.js';
 import { tokenValido } from '../integraciones/integraciones.js';
 import { borrarKey, guardarConfiguracion, leerConfiguracion, PROVEEDORES, type Slot } from '../agente/configuracionAgente.js';
 
@@ -117,7 +118,7 @@ export function rutasAgente(app: FastifyInstance, dependencias: Partial<Dependen
   });
 
   app.get('/api/conversaciones', async (req) => {
-    const f = z.object({ canal: z.enum(['WHATSAPP', 'SIMULADOR']).optional(), estado: z.enum(['ABIERTA', 'CERRADA', 'DERIVADA']).optional() }).parse(req.query);
+    const f = z.object({ canal: z.enum(['WHATSAPP', 'SIMULADOR']).optional(), fase: z.enum(ESTADOS).optional() }).parse(req.query);
     return listarConversaciones(f);
   });
   app.get('/api/conversaciones/:id', async (req, reply) => {
