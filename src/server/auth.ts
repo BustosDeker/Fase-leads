@@ -54,15 +54,17 @@ function cookieDe(req: FastifyRequest): string | undefined {
 
 // Rutas que no usan la sesión: tienen su propia autenticación (token Bearer o firma HMAC) o son el login.
 const PUBLICAS = new Set(['/api/auth/login', '/api/auth/yo', '/api/buyers', '/api/payers/confirmacion', '/api/whatsapp/webhook',
-  '/api/agente/seguimiento/candidatos', '/api/agente/seguimiento/ejecutar', '/api/agente/derivaciones/pendientes']);
+  '/api/agente/seguimiento/candidatos', '/api/agente/seguimiento/ejecutar', '/api/agente/cobranza/candidatos', '/api/agente/cobranza/ejecutar',
+  '/api/agente/cuotas/ejecutar', '/api/agente/derivaciones/pendientes']);
 // Acciones de administración.
-const SOLO_ADMIN = [/^\/api\/etl\/ejecutar$/, /^\/api\/whatsapp\/(conectar|desconectar)$/];
+const SOLO_ADMIN = [/^\/api\/etl\/ejecutar$/, /^\/api\/whatsapp\/(conectar|desconectar)$/, /^\/api\/agente\/configuracion(\/.*)?$/];
 // Lo único que un viewer puede hacer además de consultar.
 const VIEWER_POST = new Set(['/api/auth/logout', '/api/tablero/explicar']);
 
 /** Decide si una petición está permitida. Exportado para las pruebas. */
 export function autorizar(metodo: string, ruta: string, s: Sesion | null): { ok: true } | { ok: false; estado: 401 | 403; error: string } {
-  if (!ruta.startsWith('/api/') || PUBLICAS.has(ruta)) return { ok: true };
+  // El estudiante abre /api/pago/<token>... desde WhatsApp, sin sesión en el panel: el token es su propia credencial.
+  if (!ruta.startsWith('/api/') || PUBLICAS.has(ruta) || ruta.startsWith('/api/pago/')) return { ok: true };
   if (!s) return { ok: false, estado: 401, error: 'Inicia sesión para continuar.' };
   if (SOLO_ADMIN.some((r) => r.test(ruta)) && s.rol !== 'admin') return { ok: false, estado: 403, error: 'Esta acción es solo para el rol administrador.' };
   if (s.rol === 'viewer' && metodo !== 'GET' && !VIEWER_POST.has(ruta)) return { ok: false, estado: 403, error: 'Tu rol solo permite consultar (sin cambios).' };

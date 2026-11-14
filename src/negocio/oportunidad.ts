@@ -2,8 +2,8 @@
 // (TRANSICION_ESTADO_OPORTUNIDAD + trigger). Cada transición guarda su evento con fecha.
 import { sql } from '../db.js';
 
-export const ESTADOS = ['ABIERTA', 'EN_DIAGNOSTICO', 'APTA_PARA_COTIZAR', 'EN_NEGOCIACION', 'ACEPTADA', 'TRANSFERIDA',
-  'PAYER_CONFIRMADO', 'DESCARTADA'] as const;
+export const ESTADOS = ['ABIERTA', 'EN_DIAGNOSTICO', 'APTA_PARA_COTIZAR', 'EN_NEGOCIACION', 'ACEPTADA', 'PENDIENTE_PAGO',
+  'TRANSFERIDA', 'PAYER_CONFIRMADO', 'DESCARTADA'] as const;
 export type EstadoOportunidad = (typeof ESTADOS)[number];
 export type Origen = 'AGENTE' | 'HUMANO' | 'SISTEMA' | 'PAYERS';
 

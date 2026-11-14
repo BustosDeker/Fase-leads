@@ -2,11 +2,12 @@
 // Los filtros viven en la URL: se pueden compartir y sobreviven a recargar la página.
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { fecha } from '../formato';
 import { Aviso, BarraFiltros, CampoBusqueda, Chip, ChipEstado, Encabezado, NOMBRE_ESTADO, ORDEN_ESTADOS, SelectFiltro, Segmentos, Tabla,
   coincide, soles, unicos, useFiltros } from '../components/ui';
+import { useLiveEvents } from '../hooks/useLiveEvents';
 
 interface Op { oportunidad_id: number; lead_id: number; estado: string; fecha_inicio: string; es_demo: boolean; estudiante: string;
   responsable: string; canal: string | null; carrera: string | null; grupo_etapa: string; desde: string | null; precio: number | null; version: number | null }
@@ -23,7 +24,10 @@ const ORDENES: Record<string, (a: Op, b: Op) => number> = {
 
 export function Pipeline() {
   const navegar = useNavigate();
+  const cliente = useQueryClient();
   const q = useQuery({ queryKey: ['pipeline'], queryFn: () => api.get<Op[]>('/api/pipeline') });
+  // Sin esto el tablero solo refleja lo que el agente avanzó por WhatsApp al recargar la página a mano.
+  useLiveEvents({ oltp: () => cliente.invalidateQueries({ queryKey: ['pipeline'] }) });
   const { f, fijar, activos } = useFiltros({ vista: 'tablero', texto: '', asesor: '', canal: '', etapa: '', datos: '', cerradas: '', orden: 'recientes' });
   const datos = q.data ?? [];
   const filtradas = useMemo(() => datos.filter((o) =>
@@ -31,9 +35,13 @@ export function Pipeline() {
     (!f.datos || (f.datos === 'prueba' ? o.es_demo : !o.es_demo)) && coincide(f.texto, o.estudiante, o.carrera, o.oportunidad_id))
     .sort(ORDENES[f.orden] ?? ORDENES.recientes), [datos, f.asesor, f.canal, f.etapa, f.datos, f.texto, f.orden]);
   const verCerradas = f.cerradas === '1';
-  const columnas = ORDEN_ESTADOS.filter((e) => verCerradas || (e !== 'DESCARTADA' && e !== 'PAYER_CONFIRMADO'));
+  // ABIERTA sigue siendo el punto de partida real del embudo (para medir ese tiempo en los KPI), aunque el
+  // diagnóstico ya venga resuelto de BUYERS: solo se confirma por WhatsApp, no se salta ese estado.
+  // PAYER_CONFIRMADO ya es el cierre exitoso real (coincide con la bandeja de PAYERS); TRANSFERIDA es
+  // un estado técnico que la pasarela de pago ya no usa para leads nuevos, así que se oculta por defecto.
+  const columnas = ORDEN_ESTADOS.filter((e) => verCerradas || (e !== 'DESCARTADA' && e !== 'TRANSFERIDA'));
   const abrir = (o: Op) => navegar(`/leads/ficha?lead=${o.lead_id}&op=${o.oportunidad_id}`);
-  const enJuego = filtradas.filter((o) => !['DESCARTADA', 'PAYER_CONFIRMADO'].includes(o.estado));
+  const enJuego = filtradas.filter((o) => !['DESCARTADA', 'TRANSFERIDA', 'PAYER_CONFIRMADO'].includes(o.estado));
   const montoEnJuego = enJuego.reduce((s, o) => s + Number(o.precio ?? 0), 0);
   // «vista» y «orden» no cuentan como filtros activos.
   const nFiltros = activos - (f.vista !== 'tablero' ? 1 : 0) - (f.orden !== 'recientes' ? 1 : 0);
@@ -57,7 +65,7 @@ export function Pipeline() {
           opciones={[['estancadas', 'Más días en el estado'], ['monto', 'Mayor monto'], ['nombre', 'Nombre (A–Z)']]} />
         <label className="flex min-h-[44px] items-center gap-2 text-sm sm:col-span-2">
           <input type="checkbox" className="h-5 w-5 accent-black" checked={verCerradas} onChange={(e) => fijar({ cerradas: e.target.checked ? '1' : '' })} />
-          Ver descartadas y confirmadas</label>
+          Ver descartadas y transferidas (estado antiguo)</label>
       </BarraFiltros>
       {q.isError && <Aviso>{(q.error as Error).message}</Aviso>}
       {q.isLoading && <div className="tarjeta h-80 animate-pulse" aria-hidden />}
@@ -110,7 +118,7 @@ export function Pipeline() {
 
       {q.data && f.vista === 'lista' && (
         <section className="tarjeta p-4">
-          <Tabla filas={filtradas.filter((o) => verCerradas || !['DESCARTADA', 'PAYER_CONFIRMADO'].includes(o.estado))} clave={(o) => o.oportunidad_id}
+          <Tabla filas={filtradas.filter((o) => verCerradas || !['DESCARTADA', 'TRANSFERIDA'].includes(o.estado))} clave={(o) => o.oportunidad_id}
             alClic={abrir} vacio="Ninguna oportunidad coincide con los filtros."
             columnas={[
               { titulo: 'Estudiante', orden: (o) => o.estudiante, celda: (o) => <><div className="font-medium">{o.estudiante}</div>

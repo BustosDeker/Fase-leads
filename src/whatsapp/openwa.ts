@@ -107,7 +107,9 @@ async function buscarSesion() {
 async function asegurarWebhook(sesionId: string) {
   const c = cfg();
   if (!c.secreto) throw new ErrorOpenWA(0, 'Falta OPENWA_WEBHOOK_SECRET en .env (lo genera `npm run setup`).');
-  const destino = `http://localhost:${config.puerto}/api/whatsapp/webhook`;
+  // En Linux, `localhost` puede resolverse primero a ::1 mientras Fastify escucha en IPv4.
+  // Usar explícitamente 127.0.0.1 evita que OpenWA entregue eventos al puerto equivocado.
+  const destino = `http://127.0.0.1:${config.puerto}/api/whatsapp/webhook`;
   const existentes = await llamar<any[]>('GET', `/api/sessions/${sesionId}/webhooks`);
   // El secreto no se puede leer de vuelta: se recrea para garantizar que coincide con el de .env.
   for (const w of existentes.filter((x) => x.url === destino)) await llamar('DELETE', `/api/sessions/${sesionId}/webhooks/${w.id}`);

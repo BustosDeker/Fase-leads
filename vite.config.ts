@@ -10,5 +10,5 @@ export default defineConfig({
   root: 'src/web',
   plugins: [react()],
   build: { outDir: '../../dist/web', emptyOutDir: true, chunkSizeWarningLimit: 900 },
-  server: { port: 5173, proxy: { '/api': { target: API, changeOrigin: true } } },
+  server: { port: 5173, proxy: { '/api/': { target: API, changeOrigin: true } } },
 });

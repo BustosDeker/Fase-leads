@@ -3,8 +3,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { oltp } from '../db.js';
+import { catalogos } from '../agente/contexto.js';
 import { estadoAgente } from '../agente/motor.js';
 import { bandejaPayers, confirmarDesdePayers, esquemaConfirmacionPayers, esquemaLeadBuyers, registrarLeadDesdeBuyers, tokenValido, transferirAPayers } from '../integraciones/integraciones.js';
+import { bandejaPagos, confirmarPagoSimulado, obtenerPagoPorToken, rechazarPagoSimulado } from '../negocio/pagos.js';
 import { resumenEstado as estadoWhatsApp } from '../whatsapp/openwa.js';
 import { publicar } from './eventos.js';
 
@@ -50,13 +52,45 @@ export function rutasIntegraciones(app: FastifyInstance) {
     return r;
   });
 
+  // ---------------- Catálogo académico (para el select del simulador de BUYERS)
+  app.get('/api/catalogos/academicos', async () => {
+    const cat = await catalogos();
+    return { universidades: cat.universidades.map((u) => u.nombre).sort((a, b) => a.localeCompare(b, 'es')),
+      carreras: cat.carreras.map((c) => c.nombre).sort((a, b) => a.localeCompare(b, 'es')) };
+  });
+
+  // ---------------- Pasarela de pago simulada (pública: la abre el estudiante desde el enlace de WhatsApp)
+  app.get('/api/pago/:token', async (req, reply) => {
+    const { token } = z.object({ token: z.string().min(10).max(40) }).parse(req.params);
+    const d = await obtenerPagoPorToken(token);
+    if (!d) return reply.code(404).send({ error: 'Enlace de pago no encontrado o vencido.' });
+    return d;
+  });
+  app.post('/api/pago/:token/confirmar', async (req) => {
+    const { token } = z.object({ token: z.string().min(10).max(40) }).parse(req.params);
+    const { medioPagoId } = z.object({ medioPagoId: id }).parse(req.body);
+    const r = await confirmarPagoSimulado(token, { medioPagoId });
+    avisar(r.oportunidadId, null, 'pago');
+    return r;
+  });
+  app.post('/api/pago/:token/rechazar', async (req) => {
+    const { token } = z.object({ token: z.string().min(10).max(40) }).parse(req.params);
+    const { motivo } = z.object({ motivo: z.string().max(300).optional() }).parse(req.body ?? {});
+    const r = await rechazarPagoSimulado(token, motivo);
+    avisar(r.oportunidadId, null, 'pago');
+    return r;
+  });
+  // Bandeja de PAYERS (panel interno): solo pendiente de pago, confirmadas y rechazadas.
+  app.get('/api/pagos/bandeja', async () => bandejaPagos());
+
   // ---------------- Agente Plataforma: embudo IMPULSE y salud del sistema
   app.get('/api/plataforma/resumen', async () => {
     const r = await (await oltp()).request().query(`
       SELECT (SELECT COUNT(*) FROM dbo.BUYER) AS buyers, (SELECT COUNT(*) FROM dbo.LEAD) AS leads,
              (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'ACEPTADA') AS aceptadas,
              (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'TRANSFERIDA') AS transferidas,
-             (SELECT COUNT(*) FROM dbo.CONVERSION_PAYER_REF) AS payers_confirmados,
+             (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'PENDIENTE_PAGO') AS pendientes_pago,
+             (SELECT COUNT(*) FROM dbo.OPORTUNIDAD_COMERCIAL WHERE estado = 'PAYER_CONFIRMADO') AS payers_confirmados,
              (SELECT COUNT(*) FROM dbo.CUSTOMER) AS customers;
       SELECT estado, COUNT(*) AS n FROM dbo.OPORTUNIDAD_COMERCIAL GROUP BY estado;
       SELECT COUNT(*) AS turnos, AVG(CAST(latencia_ms AS FLOAT)) AS latencia_media, SUM(CASE WHEN error IS NOT NULL THEN 1 ELSE 0 END) AS con_error,
@@ -65,6 +99,6 @@ export function rutasIntegraciones(app: FastifyInstance) {
       SELECT motivo, COUNT(*) AS n FROM dbo.ESCALAMIENTO WHERE estado = 'PENDIENTE' GROUP BY motivo ORDER BY n DESC;
       SELECT canal_mensajeria AS canal, COUNT(*) AS n FROM dbo.CONVERSACION WHERE estado <> 'CERRADA' AND canal_mensajeria <> 'HISTORICO' GROUP BY canal_mensajeria;`);
     const [emb, est, ag, esc, conv] = r.recordsets as any[];
-    return { embudo: emb[0], estados: est, agente: { ...ag[0], ...estadoAgente() }, escalamientosPendientes: esc, conversacionesAbiertas: conv, whatsapp: estadoWhatsApp() };
+    return { embudo: emb[0], estados: est, agente: { ...ag[0], ...(await estadoAgente()) }, escalamientosPendientes: esc, conversacionesAbiertas: conv, whatsapp: estadoWhatsApp() };
   });
 }

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { aInputLocal } from '../formato';
 import { Aviso, Bloque, Chip, Encabezado } from '../components/ui';
+import { useLiveEvents } from '../hooks/useLiveEvents';
 
 interface Cita { cita_id: number; oportunidad_id: number; lead_id: number; asesor_id: number; asesor: string; inicio: string; fin: string;
   medio: string; enlace?: string | null; estado: string; estudiante: string; solapada: number }
@@ -27,6 +28,7 @@ export function Agenda() {
   const fin = new Date(inicioSemana.getTime() + 7 * 86_400_000);
   const q = useQuery({ queryKey: ['agenda', inicioSemana.toISOString()],
     queryFn: () => api.get<Agenda>('/api/agenda', { desde: inicioSemana.toISOString(), hasta: fin.toISOString() }) });
+  useLiveEvents({ oltp: () => cliente.invalidateQueries({ queryKey: ['agenda', inicioSemana.toISOString()] }) });
   const citas = useMemo(() => (q.data?.citas ?? []).filter((c) => (!asesor || String(c.asesor_id) === asesor)
     && (!estadoCita || c.estado === estadoCita) && (!medio || c.medio === medio)), [q.data, asesor, estadoCita, medio]);
   const totalSemana = q.data?.citas.length ?? 0;

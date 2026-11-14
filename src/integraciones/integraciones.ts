@@ -31,9 +31,19 @@ export const esquemaLeadBuyers = z.object({
   }),
   canal: z.string().max(80).optional(),          // p. ej. «Instagram», «Referidos», «Convenio universitario»
   necesidad: z.string().max(200).optional(),
-  universidad: z.string().max(150).optional(),
-  carrera: z.string().max(120).optional(),
-  etapa: z.enum(['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER']).optional(),
+  // Perfil académico y diagnóstico: obligatorios desde BUYERS, para que el agente de WhatsApp nunca
+  // tenga que volver a preguntarlos (solo confirma el interés antes de cotizar). Tema es la única
+  // excepción: el estudiante puede no tenerlo todavía ("Por definir").
+  universidad: z.string().trim().min(2).max(150),
+  carrera: z.string().trim().min(2).max(120),
+  etapa: z.enum(['CICLO_IX', 'CICLO_X', 'EGRESADO', 'BACHILLER']),
+  sede: z.string().trim().min(2).max(100),
+  tema: z.string().max(250).optional(),
+  tipoTesis: z.enum(['DESCRIPTIVA', 'CORRELACIONAL', 'EXPERIMENTAL', 'APLICADA', 'NO_DEFINIDO']),
+  avanceDeclarado: z.number().min(0).max(100),
+  tieneEmpresaAplicacion: z.boolean(),
+  limitaciones: z.string().trim().min(2).max(300),
+  fechaLimite: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha límite no válida (AAAA-MM-DD).'),
   es_prueba: z.boolean().default(false),
 });
 
@@ -46,8 +56,9 @@ export async function registrarLeadDesdeBuyers(d: z.infer<typeof esquemaLeadBuye
   if (previo.recordset[0]) return { creado: false, leadId: previo.recordset[0].lead_id as number, oportunidadId: previo.recordset[0].oportunidad_id as number | null };
 
   const cat = await catalogos();
-  const u = d.universidad ? buscarUniversidad(d.universidad, cat) : null;
-  const ca = d.carrera ? buscarCarrera(d.carrera, cat) : null;
+  const u = buscarUniversidad(d.universidad, cat);
+  const ca = buscarCarrera(d.carrera, cat);
+  if (!u || !ca) throw new ErrorNegocio(`No se reconoce ${!u ? 'la universidad' : 'la carrera'} indicada; revisa el nombre o la sigla.`);
   return enTransaccion(pool, async (tx) => {
     const canal = d.canal ? await new sql.Request(tx).input('c', sql.NVarChar, `%${d.canal}%`)
       .query('SELECT TOP 1 canal_id FROM dbo.CANAL WHERE nombre LIKE @c OR plataforma LIKE @c OR tipo LIKE @c ORDER BY canal_id') : null;
@@ -65,10 +76,28 @@ export async function registrarLeadDesdeBuyers(d: z.infer<typeof esquemaLeadBuye
         INSERT dbo.OPORTUNIDAD_COMERCIAL (lead_id, fecha_inicio, estado, es_demo) VALUES (@l, SYSDATETIME(), 'ABIERTA', @demo); SET @o = SCOPE_IDENTITY();
         SELECT @c AS contacto_id, @l AS lead_id, @o AS oportunidad_id;`);
     const x = r.recordset[0];
-    if (u && ca && d.etapa) await new sql.Request(tx).input('c', sql.Int, x.contacto_id).input('u', sql.Int, u.id).input('ca', sql.Int, ca.id).input('e', sql.VarChar, d.etapa)
-      .query('INSERT dbo.PERFIL_ACADEMICO (contacto_id, universidad_id, carrera_id, etapa_academica) VALUES (@c, @u, @ca, @e)');
+    const ciclo = d.etapa === 'CICLO_IX' ? 'IX' : d.etapa === 'CICLO_X' ? 'X' : null;
+    await new sql.Request(tx).input('c', sql.Int, x.contacto_id).input('u', sql.Int, u.id).input('ca', sql.Int, ca.id)
+      .input('e', sql.VarChar, d.etapa).input('ci', sql.VarChar(20), ciclo).input('s', sql.VarChar(100), d.sede)
+      .query('INSERT dbo.PERFIL_ACADEMICO (contacto_id, universidad_id, carrera_id, etapa_academica, ciclo, sede) VALUES (@c, @u, @ca, @e, @ci, @s)');
     await registrarEvento(tx, x.oportunidad_id, 'OPORTUNIDAD_CREADA', 'SISTEMA', `Lead recibido de BUYERS${d.canal ? ' · ' + d.canal : ''}`);
-    return { creado: true, leadId: x.lead_id as number, oportunidadId: x.oportunidad_id as number, perfilAcademico: !!(u && ca && d.etapa) };
+
+    // La oportunidad se queda en ABIERTA (para medir ese tiempo en los KPI, como cualquier lead) aunque el
+    // simulador ya trajo el diagnóstico completo: se guarda como SOLICITADO (sin entregar ni calificar) y es
+    // el agente quien, por WhatsApp, lo recapitula, deja que el estudiante lo confirme o corrija, y recién ahí
+    // usa entregar_diagnostico (pasa a EN_DIAGNOSTICO) y calificar_aptitud si quiere ver planes.
+    await new sql.Request(tx).input('l', sql.Int, x.lead_id).input('o', sql.Int, x.oportunidad_id)
+      .input('f', sql.VarChar(10), d.fechaLimite).query(`
+        INSERT dbo.PERFIL_NEGOCIACION (lead_id, oportunidad_id, version, fecha_limite, completo)
+        VALUES (@l, @o, 1, CONVERT(date, @f, 23), 1)`);
+    await new sql.Request(tx).input('l', sql.Int, x.lead_id).input('o', sql.Int, x.oportunidad_id)
+      .input('t', sql.NVarChar(250), d.tema?.trim() || 'Por definir').input('tt', sql.VarChar, d.tipoTesis)
+      .input('av', sql.Decimal(5, 2), d.avanceDeclarado).input('em', sql.Bit, d.tieneEmpresaAplicacion)
+      .input('li', sql.NVarChar(300), d.limitaciones).query(`
+        INSERT dbo.DIAGNOSTICO (lead_id, oportunidad_id, fecha_solicitud, estado, tema_tesis, tipo_tesis, avance_declarado,
+          tiene_empresa_aplicacion, limitaciones, requiere_derivacion)
+        VALUES (@l, @o, SYSDATETIME(), 'SOLICITADO', @t, @tt, @av, @em, @li, 0)`);
+    return { creado: true, leadId: x.lead_id as number, oportunidadId: x.oportunidad_id as number };
   });
 }
 

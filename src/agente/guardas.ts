@@ -29,6 +29,12 @@ export function detectarInyeccion(texto: string): boolean {
 /** Extrae un tema de tesis sin confundirlo con datos de avance o disponibilidad de empresa. */
 export function extraerTemaTesis(texto: string): string | null {
   const t = texto.trim();
+  // Tema aún sin definir pero con una línea de investigación orientativa: es un valor válido.
+  if (/^por definir\s*[(:\-—]\s*\S/i.test(t)) return t.slice(0, 250);
+  // Frases que empiezan con «no tengo…» (tiempo, tema, empresa) no son un tema.
+  if (/^no\s+tengo(?![a-z])/i.test(normalizar(t))) return null;
+  // «No está definido/a» no es un tema.
+  if (/^no\s+est[aá]\s+definid[oa]s?(?![a-z])/i.test(t) || /^por definir[\s.!?]*$/i.test(t)) return null;
   const marcadores = [
     /(?:mi|el)\s+tema(?:\s+de\s+(?:mi\s+)?tesis)?\s*(?:es|ser[ií]a|ser[aá]|:)\s*(.+)/i,
     /mi\s+tesis\s+(?:trata|es|se\s+enfoca)\s+(?:sobre|en|de)?\s*(.+)/i,

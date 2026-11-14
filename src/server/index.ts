@@ -1,5 +1,3 @@
-// Servidor de la app INBESTIGA · LEADS (Fastify): API REST, eventos en vivo (SSE) y frontend
-// React compilado (dist/web) en el MISMO puerto. En desarrollo, Vite usa un proxy hacia /api.
 import fs from 'node:fs';
 import path from 'node:path';
 import Fastify from 'fastify';
@@ -20,12 +18,12 @@ import { resumenEstado as estadoWhatsApp } from '../whatsapp/openwa.js';
 import { estadoAgente, obtenerProveedor } from '../agente/motor.js';
 import { ErrorNegocio } from '../negocio/oportunidad.js';
 import { iniciarSchedulerSeguimiento } from '../agente/seguimiento.js';
+import { iniciarSchedulerCobranza } from '../negocio/cobranza.js';
 
 const app = Fastify({ logger: { level: 'info' } });
-// Valida proveedor, clave y modelo al arrancar; si falta una clave, queda explícito que se usa mock.
+
 obtenerProveedor();
 
-// Errores amigables: validación (400) y SQL Server caído (503) con pasos a seguir.
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ZodError) return reply.code(400).send({ error: 'Datos no válidos: ' + err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '), detalle: err.issues });
   if (err instanceof ErrorNegocio) return reply.code(err.estado).send({ error: err.message });
@@ -37,7 +35,6 @@ app.setErrorHandler((err, _req, reply) => {
   return reply.code(500).send({ error: e?.message ?? 'Error interno' });
 });
 
-/** Estado de SQL Server para el pie del menú lateral y el diagnóstico de errores. */
 app.get('/api/salud', async () => {
   const sqlServer: Record<string, unknown> = { ok: false };
   try {
@@ -50,10 +47,10 @@ app.get('/api/salud', async () => {
   } catch (err) {
     sqlServer.error = explicarErrorSql(err);
   }
-  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: estadoAgente(), whatsapp: estadoWhatsApp() };
+  return { app: 'INBESTIGA · LEADS', hora: new Date().toISOString(), sqlServer, agente: await estadoAgente(), whatsapp: estadoWhatsApp() };
 });
 
-rutasAuth(app);   // primero: protege todas las rutas /api siguientes
+rutasAuth(app);
 rutasEventos(app);
 rutasTablero(app);
 rutasLeads(app);
@@ -62,12 +59,12 @@ rutasWhatsApp(app);
 rutasIntegraciones(app);
 rutasEvidencias(app);
 iniciarSchedulerSeguimiento();
+iniciarSchedulerCobranza();
 
 // Frontend compilado (si existe) + rutas del SPA.
 const DIST = path.join(RAIZ, 'dist', 'web');
 if (fs.existsSync(path.join(DIST, 'index.html'))) {
-  // wildcard (por defecto): sirve también los archivos generados por un `npm run build` posterior al arranque.
-  // Si un archivo no existe, @fastify/static deriva al manejador de "no encontrado" (fallback del SPA).
+
   await app.register(fastifyStatic, { root: DIST });
   app.setNotFoundHandler((req, reply) => {
     if (req.method === 'GET' && !req.url.startsWith('/api/')) return reply.sendFile('index.html');

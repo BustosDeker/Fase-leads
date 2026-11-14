@@ -86,17 +86,26 @@ export async function asegurarConversacionWhatsApp(chatId: string, nombreVisible
   return r.conversacion_id;
 }
 
-export async function listarConversaciones(filtro: { canal?: string; estado?: string }) {
-  const r = await (await oltp()).request().input('canal', sql.VarChar, filtro.canal ?? null).input('estado', sql.VarChar, filtro.estado ?? null).query(`
-    SELECT TOP 200 cv.conversacion_id, cv.canal_mensajeria, cv.chat_id, cv.estado, cv.control_humano, cv.fecha_inicio, cv.oportunidad_id,
-           co.nombres + ' ' + co.apellidos AS estudiante, co.es_demo, co.consentimiento_contacto, co.no_contactar, o.estado AS estado_oportunidad, o.lead_id,
+/** Punto de partida: la OPORTUNIDAD (no la conversación), para que un lead recién creado desde BUYERS aparezca
+ *  aquí aunque todavía no tenga ningún mensaje — así se puede iniciar la negociación sin tener que buscarlo.
+ *  `fase` filtra por el estado del embudo; sin `fase`, se muestran solo las fases activas (se ocultan las
+ *  cerradas: descartada, payer confirmado y transferida) para no llenar la bandeja de chats ya resueltos. */
+export async function listarConversaciones(filtro: { canal?: string; fase?: string }) {
+  const r = await (await oltp()).request().input('canal', sql.VarChar, filtro.canal ?? null).input('fase', sql.VarChar, filtro.fase ?? null).query(`
+    SELECT TOP 200 cv.conversacion_id, cv.canal_mensajeria, cv.chat_id, cv.estado, cv.control_humano, ISNULL(cv.fecha_inicio, o.fecha_inicio) AS fecha_inicio,
+           o.oportunidad_id, co.nombres + ' ' + co.apellidos AS estudiante, co.es_demo, co.consentimiento_contacto, co.no_contactar,
+           co.whatsapp, co.whatsapp_habilitado, o.estado AS estado_oportunidad, o.lead_id,
            ult.fecha_hora AS ultimo_mensaje, ult.contenido AS ultimo_texto, ult.emisor AS ultimo_emisor,
            (SELECT COUNT(*) FROM dbo.ESCALAMIENTO e WHERE e.conversacion_id = cv.conversacion_id AND e.estado = 'PENDIENTE') AS escalamientos_pendientes
-    FROM dbo.CONVERSACION cv JOIN dbo.CONTACTO co ON co.contacto_id = cv.contacto_id
-    LEFT JOIN dbo.OPORTUNIDAD_COMERCIAL o ON o.oportunidad_id = cv.oportunidad_id
+    FROM dbo.OPORTUNIDAD_COMERCIAL o
+    JOIN dbo.LEAD l ON l.lead_id = o.lead_id JOIN dbo.BUYER b ON b.buyer_id = l.buyer_id JOIN dbo.CONTACTO co ON co.contacto_id = b.contacto_id
+    OUTER APPLY (SELECT TOP 1 c2.conversacion_id, c2.canal_mensajeria, c2.chat_id, c2.estado, c2.control_humano, c2.fecha_inicio
+                 FROM dbo.CONVERSACION c2 WHERE c2.oportunidad_id = o.oportunidad_id AND c2.canal_mensajeria <> 'HISTORICO'
+                 ORDER BY c2.fecha_inicio DESC) cv
     OUTER APPLY (SELECT TOP 1 fecha_hora, contenido, emisor FROM dbo.MENSAJE m WHERE m.conversacion_id = cv.conversacion_id ORDER BY m.fecha_hora DESC, m.mensaje_id DESC) ult
-    WHERE cv.canal_mensajeria <> 'HISTORICO' AND (@canal IS NULL OR cv.canal_mensajeria = @canal) AND (@estado IS NULL OR cv.estado = @estado)
-    ORDER BY ISNULL(ult.fecha_hora, cv.fecha_inicio) DESC`);
+    WHERE (@canal IS NULL OR cv.canal_mensajeria = @canal)
+      AND (@fase IS NOT NULL AND o.estado = @fase OR @fase IS NULL AND o.estado NOT IN ('DESCARTADA', 'PAYER_CONFIRMADO', 'TRANSFERIDA'))
+    ORDER BY ISNULL(ult.fecha_hora, o.fecha_inicio) DESC`);
   return r.recordset;
 }
 
